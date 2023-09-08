@@ -36,8 +36,7 @@ def main():
     parser.add_argument('--num-labels', type=int, default=4000)
     parser.add_argument("--expand-labels", action="store_true",
                         help="expand labels to fit eval steps")
-    parser.add_argument('--arch', default='wideresnet', type=str,
-                        help='dataset name')
+    parser.add_argument('--arch', default='wideresnet', type=str)
     parser.add_argument('--total-steps', default=2**20, type=int,
                         help='number of total steps to run')
     parser.add_argument('--eval-step', default=1024, type=int,
@@ -258,7 +257,7 @@ def main():
             output_device=args.local_rank, find_unused_parameters=True)
 
     logger.info("***** Running training *****")
-    logger.info(f"  Task = {args.dataset}@{args.num_labeled}")
+    logger.info(f"  Task = {args.dataset}@{args.num_labels}")
     logger.info(f"  Num Epochs = {args.epochs}")
     logger.info(f"  Batch size per GPU = {args.batch_size}")
     logger.info(
