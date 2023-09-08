@@ -24,47 +24,6 @@ logger = logging.getLogger(__name__)
 best_acc = 0
 
 
-def save_checkpoint(state, is_best, checkpoint, filename='checkpoint.pth.tar'):
-    filepath = os.path.join(checkpoint, filename)
-    torch.save(state, filepath)
-    if is_best:
-        shutil.copyfile(filepath, os.path.join(checkpoint,
-                                               'model.pth.tar'))
-
-
-def set_seed(args):
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    if args.n_gpu > 0:
-        torch.cuda.manual_seed_all(args.seed)
-
-
-def get_cosine_schedule_with_warmup(optimizer,
-                                    num_warmup_steps,
-                                    num_training_steps,
-                                    num_cycles=7./16.,
-                                    last_epoch=-1):
-    def _lr_lambda(current_step):
-        if current_step < num_warmup_steps:
-            return float(current_step) / float(max(1, num_warmup_steps))
-        no_progress = float(current_step - num_warmup_steps) / \
-            float(max(1, num_training_steps - num_warmup_steps))
-        return max(0., math.cos(math.pi * num_cycles * no_progress))
-
-    return LambdaLR(optimizer, _lr_lambda, last_epoch)
-
-
-def interleave(x, size):
-    s = list(x.shape)
-    return x.reshape([-1, size] + s[1:]).transpose(0, 1).reshape([-1] + s[1:])
-
-
-def de_interleave(x, size):
-    s = list(x.shape)
-    return x.reshape([size, -1] + s[1:]).transpose(0, 1).reshape([-1] + s[1:])
-
-
 def main():
     parser = argparse.ArgumentParser(description='PyTorch CrossMatch Training')
     parser.add_argument('--gpu-id', default='0', type=int,
@@ -319,6 +278,47 @@ def main():
     model2.zero_grad()
     train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
           model1, optimizer1, ema_model1, scheduler1, model2, optimizer2, ema_model2, scheduler2)
+
+
+def save_checkpoint(state, is_best, checkpoint, filename='checkpoint.pth.tar'):
+    filepath = os.path.join(checkpoint, filename)
+    torch.save(state, filepath)
+    if is_best:
+        shutil.copyfile(filepath, os.path.join(checkpoint,
+                                               'model.pth.tar'))
+
+
+def set_seed(args):
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if args.n_gpu > 0:
+        torch.cuda.manual_seed_all(args.seed)
+
+
+def get_cosine_schedule_with_warmup(optimizer,
+                                    num_warmup_steps,
+                                    num_training_steps,
+                                    num_cycles=7./16.,
+                                    last_epoch=-1):
+    def _lr_lambda(current_step):
+        if current_step < num_warmup_steps:
+            return float(current_step) / float(max(1, num_warmup_steps))
+        no_progress = float(current_step - num_warmup_steps) / \
+            float(max(1, num_training_steps - num_warmup_steps))
+        return max(0., math.cos(math.pi * num_cycles * no_progress))
+
+    return LambdaLR(optimizer, _lr_lambda, last_epoch)
+
+
+def interleave(x, size):
+    s = list(x.shape)
+    return x.reshape([-1, size] + s[1:]).transpose(0, 1).reshape([-1] + s[1:])
+
+
+def de_interleave(x, size):
+    s = list(x.shape)
+    return x.reshape([size, -1] + s[1:]).transpose(0, 1).reshape([-1] + s[1:])
 
 
 def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
