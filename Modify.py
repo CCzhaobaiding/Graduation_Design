@@ -92,8 +92,9 @@ def main():
 
 
     def create_model(args):
-        import models.wideresnet_emb as models
-        model = models.build_wideresnet(depth=args.model_depth,
+        if args.dataset != 'imagenet':
+            import models.wideresnet_emb as models
+            model = models.build_wideresnet(depth=args.model_depth,
                                             widen_factor=args.model_width,
                                             dropout=0,
                                             num_classes=args.num_classes)
