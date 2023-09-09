@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="6df94d5b-064c-4b82-a9f8-f9b44cbec405" name="HRZhao@121.89.205.85:9100" url="">
+        <fileTransfer rootFolder="/workspace/HRZhao/" accessType="SFTP" host="121.89.205.85" port="9100" sshConfigId="70c77704-787b-4782-8b85-82feafea96ba" sshConfig="HRZhao@121.89.205.85:9100 key" keyPair="true">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>

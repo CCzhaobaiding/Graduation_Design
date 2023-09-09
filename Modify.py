@@ -5,7 +5,6 @@ import os
 import random
 import shutil
 import time
-
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -17,9 +16,10 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from dataset.dataset import DATASET_GETTERS
+from dataset.sslDataset import SSL_Dataset, ImageNetLoader
 from utils import AverageMeter, accuracy
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 logger = logging.getLogger(__name__)
 best_acc = 0
 
@@ -61,6 +61,20 @@ def main():
     parser.add_argument('--no-progress', action='store_true', help="don't use progress bar")
     args = parser.parse_args()
 
+    if args.dataset == 'imagenet':
+        args.num_classes = 1000
+        args.model_depth = 0
+        args.model_width = 0
+    elif args.dataset == 'cifar100':
+        args.num_classes = 100
+        args.model_depth = 28
+        args.model_width = 8
+    else:
+        args.num_classes = 10
+        args.model_depth = 28
+        args.model_width = 2
+
+    # shoose model
     def create_model(args):
         if args.dataset == 'stl10':
             import models.wideresnet_var as models
@@ -68,14 +82,19 @@ def main():
                                                widen_factor=args.model_width,
                                                dropout=0,
                                                num_classes=args.num_classes)
-        elif args.dataset != 'imagenet':
+        elif args.dataset == 'imagenet':
+            import models.resnet50 as models
+            model = models.build_ResNet50(depth=args.model_depth,
+                                          widen_factor=args.model_width,
+                                          dropout=0,
+                                          num_classes=args.num_classes)
+        else:
             import models.wideresnet_emb as models
             model = models.build_wideresnet(depth=args.model_depth,
                                             widen_factor=args.model_width,
                                             dropout=0,
                                             num_classes=args.num_classes)
-        else:
-            logger.info("model of imagenet")
+
         logger.info("Total params: {:.2f}M".format(
             sum(p.numel() for p in model.parameters()) / 1e6))
         return model
@@ -113,28 +132,42 @@ def main():
         os.makedirs(args.out, exist_ok=True)
         args.writer = SummaryWriter(args.out)
 
-    if args.dataset == 'cifar10':
-        args.num_classes = 10
-        args.model_depth = 28
-        args.model_width = 2
-    elif args.dataset == 'cifar100':
-        args.num_classes = 100
-        args.model_depth = 28
-        args.model_width = 8
-    elif args.dataset == 'stl10':
-        args.num_classes = 10
-        args.model_depth = 28
-        args.model_width = 2
-    elif args.dataset == 'svhn':
-        args.num_classes = 10
-        args.model_depth = 28
-        args.model_width = 2
-
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()
 
-    labeled_dataset, unlabeled_dataset, test_dataset = DATASET_GETTERS[args.dataset](
-        args, './data')
+    # dataset
+    # labeled_dataset, unlabeled_dataset, test_dataset = DATASET_GETTERS[args.dataset](
+    #     args, './data')
+    if args.dataset != "imagenet":
+        if args.num_labels == 10 and args.dataset == 'cifar10':
+            fixmatch_index = [
+                [7408, 8148, 9850, 10361, 33949, 36506, 37018, 45044, 46443, 47447],
+                [5022, 8193, 8902, 9601, 25226, 26223, 34089, 35186, 40595, 48024],
+                [7510, 13186, 14043, 21305, 22805, 31288, 34508, 40470, 41493, 45506],
+                [9915, 9978, 16631, 19915, 28008, 35314, 35801, 36149, 39215, 42557],
+                [6695, 14891, 19726, 22715, 23999, 34230, 46511, 47457, 49181, 49397],
+                [12830, 20293, 26835, 30517, 30898, 31061, 43693, 46501, 47310, 48517],
+                [1156, 11501, 19974, 21963, 32103, 42189, 46789, 47690, 48229, 48675],
+                [4255, 6446, 8580, 11759, 12598, 29349, 29433, 33759, 35345, 38639]]
+            index = fixmatch_index[-args.seed - 1]
+            print("10 labels for cifar10")
+        else:
+            index = None
+
+
+        train_dset = SSL_Dataset(args, alg='fixmatch', name=args.dataset, train=True,
+                                num_classes=args.num_classes, data_dir=args.data_dir)
+        labeled_dataset, unlabeled_dataset = train_dset.get_ssl_dset(args.num_labels,index=index)
+
+        _eval_dset = SSL_Dataset(args, alg='fixmatch', name=args.dataset, train=False,
+                                num_classes=args.num_classes, data_dir=args.data_dir)
+        eval_dataset = _eval_dset.get_dset()
+    else:
+        image_loader = ImageNetLoader(root_path=args.data_dir, num_labels=args.num_labels,
+                                      num_class=args.num_classes)
+        labeled_dataset = image_loader.get_lb_train_data()
+        unlabeled_dataset = image_loader.get_ulb_train_data()
+        eval_dataset = image_loader.get_lb_test_data()
 
     if args.local_rank == 0:
         torch.distributed.barrier()
@@ -155,9 +188,9 @@ def main():
         num_workers=args.num_workers,
         drop_last=True)
 
-    test_loader = DataLoader(
-        test_dataset,
-        sampler=SequentialSampler(test_dataset),
+    eval_loader = DataLoader(
+        eval_dataset,
+        sampler=SequentialSampler(eval_dataset),
         batch_size=args.batch_size,
         num_workers=args.num_workers)
 
@@ -243,7 +276,7 @@ def main():
 
     model1.zero_grad()
     model2.zero_grad()
-    train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
+    train(args, labeled_trainloader, unlabeled_trainloader, eval_loader,
           model1, optimizer1, ema_model1, scheduler1, model2, optimizer2, ema_model2, scheduler2)
 
 
@@ -288,7 +321,7 @@ def de_interleave(x, size):
     return x.reshape([size, -1] + s[1:]).transpose(0, 1).reshape([-1] + s[1:])
 
 
-def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
+def train(args, labeled_trainloader, unlabeled_trainloader, eval_loader,
           model1, optimizer1, ema_model1, scheduler1, model2, optimizer2, ema_model2, scheduler2):
     global best_acc
     test_accs = []
@@ -505,7 +538,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             test_model = model1
 
         if args.local_rank in [-1, 0]:
-            test_loss, test_acc = test(args, test_loader, test_model, epoch)
+            test_loss, test_acc = test(args, eval_loader, test_model, epoch)
 
             args.writer.add_scalar('train/1.train_loss', losses.avg, epoch)
             args.writer.add_scalar('train/2.train_loss_labeled', losses_labeled.avg, epoch)
@@ -551,7 +584,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
         args.writer.close()
 
 
-def test(args, test_loader, model, epoch):
+def test(args, eval_loader, model, epoch):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -560,11 +593,11 @@ def test(args, test_loader, model, epoch):
     end = time.time()
 
     if not args.no_progress:
-        test_loader = tqdm(test_loader,
+        eval_loader = tqdm(eval_loader,
                            disable=args.local_rank not in [-1, 0])
 
     with torch.no_grad():
-        for batch_idx, (inputs, targets) in enumerate(test_loader):
+        for batch_idx, (inputs, targets) in enumerate(eval_loader):
             data_time.update(time.time() - end)
             model.eval()
 
@@ -580,9 +613,9 @@ def test(args, test_loader, model, epoch):
             batch_time.update(time.time() - end)
             end = time.time()
         #     if not args.no_progress:
-        #         test_loader.set_description("Test Iter: {batch:4}/{iter:4}. Data: {data:.3f}s. Batch: {bt:.3f}s. Loss: {loss:.4f}. top1: {top1:.2f}. top5: {top5:.2f}. ".format(
+        #         eval_loader.set_description("Test Iter: {batch:4}/{iter:4}. Data: {data:.3f}s. Batch: {bt:.3f}s. Loss: {loss:.4f}. top1: {top1:.2f}. top5: {top5:.2f}. ".format(
         #             batch=batch_idx + 1,
-        #             iter=len(test_loader),
+        #             iter=len(eval_loader),
         #             data=data_time.avg,
         #             bt=batch_time.avg,
         #             loss=losses.avg,
@@ -590,7 +623,7 @@ def test(args, test_loader, model, epoch):
         #             top5=top5.avg,
         #         ))
         # if not args.no_progress:
-        #     test_loader.close()
+        #     eval_loader.close()
 
     logger.info("top-1 acc: {:.2f}".format(top1.avg))
     logger.info("top-5 acc: {:.2f}".format(top5.avg))

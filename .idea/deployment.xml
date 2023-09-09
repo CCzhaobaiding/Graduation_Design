@@ -2,17 +2,17 @@
 <project version="4">
   <component name="PublishConfigData" remoteFilesAllowedToDisappearOnAutoupload="false">
     <serverData>
-      <paths name="HRZhao@121.89.205.85:9200">
+      <paths name="HRZhao@121.89.205.85:9100">
         <serverdata>
           <mappings>
-            <mapping deploy="/FixMatch" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/Graduation_design" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
-      <paths name="HRZhao@202.204.124.167:22">
+      <paths name="HRZhao@121.89.205.85:9200">
         <serverdata>
           <mappings>
-            <mapping deploy="FixMatch" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/Graduation_design" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
