@@ -3,8 +3,7 @@ import math
 import numpy as np
 from torch.utils.data import Dataset
 from torchvision import transforms
-from randaugment import RandAugmentMC
-
+from .randaugment import RandAugmentMC
 
 class CustomDataset(Dataset):
     def __init__(self, data, targets, transform=None):

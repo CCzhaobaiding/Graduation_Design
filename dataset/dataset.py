@@ -3,7 +3,7 @@ import numpy as np
 from PIL import Image
 from torchvision import datasets
 from torchvision import transforms
-import data_utils
+from . import data_utils
 
 logger = logging.getLogger(__name__)
 
