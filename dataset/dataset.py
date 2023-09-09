@@ -86,6 +86,7 @@ def get_cifar100(args, root):
     return train_labeled_dataset, train_unlabeled_dataset, test_dataset
 
 
+# train+extra
 def get_svhn(args, root):
     transform_labeled = transforms.Compose([
         transforms.RandomHorizontalFlip(),
@@ -101,14 +102,14 @@ def get_svhn(args, root):
     ])
 
     base_dataset = datasets.SVHN(root, split="train", download=True)
-    train_labeled_idxs, train_unlabeled_idxs = data_utils.x_u_split(
+    train_labeled_idxs, _ = data_utils.x_u_split(
         args, base_dataset.labels)
-    train_labeled_dataset = SVHNSSL(
-        root, train_labeled_idxs, split="train",
-        transform=transform_labeled)
-
+    train_labeled_dataset = SVHNSSL(root, train_labeled_idxs, split="train",
+                                    transform=transform_labeled)
+    extra_dataset = datasets.SVHN(root, split="extra", download=True)
+    train_unlabeled_idxs = np.array(range(len(np.array(extra_dataset.labels))))
     train_unlabeled_dataset = SVHNSSL(
-        root, train_unlabeled_idxs, split="train",
+        root, train_unlabeled_idxs, split="extra",
         transform=data_utils.TransformSSL(mean=svhn_mean, std=svhn_std, crop=32))
 
     test_dataset = datasets.SVHN(root, split="test", transform=transform_val, download=True)
@@ -222,7 +223,6 @@ def get_stl10(args, root):
         root, split="test", transform=transform_val, download=False)
 
     return train_labeled_dataset, train_unlabeled_dataset, test_dataset
-
 
 
 class STL10SSL(datasets.STL10):
