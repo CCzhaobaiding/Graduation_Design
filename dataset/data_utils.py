@@ -2,6 +2,8 @@ import logging
 import math
 import numpy as np
 from torch.utils.data import Dataset
+from torchvision import transforms
+from randaugment import RandAugmentMC
 
 
 class CustomDataset(Dataset):
@@ -41,3 +43,30 @@ def x_u_split(args, labels):
         labeled_idx = np.hstack([labeled_idx for _ in range(num_expand_x)])
     np.random.shuffle(labeled_idx)
     return labeled_idx, unlabeled_idx
+
+
+class TransformSSL(object):
+    def __init__(self, mean, std, crop):
+        self.weak = transforms.Compose([
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomCrop(size=crop,
+                                  padding=int(4),
+                                  padding_mode='reflect'),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=mean, std=std)
+        ])
+        self.strong = transforms.Compose([
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomCrop(size=crop,
+                                  padding=int(4),
+                                  padding_mode='reflect'),
+            RandAugmentMC(n=2, m=10),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=mean, std=std),
+        ])
+
+    def __call__(self, x):
+        weak = self.weak(x)
+        strong1 = self.strong(x)
+        strong2 = self.strong(x)
+        return weak, strong1, strong2

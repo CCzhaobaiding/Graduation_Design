@@ -1,11 +1,10 @@
 import logging
-
 import numpy as np
 from PIL import Image
 from torchvision import datasets
 from torchvision import transforms
-from . import data_utils
-from .randaugment import RandAugmentMC
+import data_utils
+
 logger = logging.getLogger(__name__)
 
 cifar10_mean = (0.4914, 0.4822, 0.4465)
@@ -45,7 +44,7 @@ def get_cifar10(args, root):
 
     train_unlabeled_dataset = CIFAR10SSL(
         root, train_unlabeled_idxs, train=True,
-        transform=TransformFixMatch(mean=cifar10_mean, std=cifar10_std))
+        transform=data_utils.TransformSSL(mean=cifar10_mean, std=cifar10_std, crop=32))
 
     test_dataset = datasets.CIFAR10(
         root, train=False, transform=transform_val, download=False)
@@ -79,7 +78,7 @@ def get_cifar100(args, root):
 
     train_unlabeled_dataset = CIFAR100SSL(
         root, train_unlabeled_idxs, train=True,
-        transform=TransformFixMatch(mean=cifar100_mean, std=cifar100_std))
+        transform=data_utils.TransformSSL(mean=cifar100_mean, std=cifar100_std, crop=32))
 
     test_dataset = datasets.CIFAR100(
         root, train=False, transform=transform_val, download=False)
@@ -110,38 +109,11 @@ def get_svhn(args, root):
 
     train_unlabeled_dataset = SVHNSSL(
         root, train_unlabeled_idxs, split="train",
-        transform=TransformFixMatch(mean=svhn_mean, std=svhn_std))
+        transform=data_utils.TransformSSL(mean=svhn_mean, std=svhn_std, crop=32))
 
     test_dataset = datasets.SVHN(root, split="test", transform=transform_val, download=True)
 
     return train_labeled_dataset, train_unlabeled_dataset, test_dataset
-
-
-class TransformFixMatch(object):
-    def __init__(self, mean, std):  # 加CropSize合并
-        self.weak = transforms.Compose([
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomCrop(size=32,
-                                  padding=int(4),
-                                  padding_mode='reflect'),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=mean, std=std)
-        ])
-        self.strong = transforms.Compose([
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomCrop(size=32,
-                                  padding=int(4),
-                                  padding_mode='reflect'),
-            RandAugmentMC(n=2, m=10),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=mean, std=std),
-        ])
-
-    def __call__(self, x):
-        weak = self.weak(x)
-        strong1 = self.strong(x)
-        strong2 = self.strong(x)
-        return weak, strong1, strong2
 
 
 class CIFAR10SSL(datasets.CIFAR10):
@@ -244,39 +216,13 @@ def get_stl10(args, root):
 
     train_unlabeled_dataset = STL10SSL(
         root, split="unlabeled", indexs=train_unlabeled_idxs,
-        transform=TransformFixMatchSTL10(mean=stl10_mean, std=stl10_std))
+        transform=data_utils.TransformSSL(mean=stl10_mean, std=stl10_std, crop=96))
 
     test_dataset = datasets.STL10(
         root, split="test", transform=transform_val, download=False)
 
     return train_labeled_dataset, train_unlabeled_dataset, test_dataset
 
-
-class TransformFixMatchSTL10(object):
-    def __init__(self, mean, std):
-        self.weak = transforms.Compose([
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomCrop(size=96,
-                                  padding=int(4),
-                                  padding_mode='reflect'),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=mean, std=std)
-        ])
-        self.strong = transforms.Compose([
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomCrop(size=96,
-                                  padding=int(4),
-                                  padding_mode='reflect'),
-            RandAugmentMC(n=2, m=10),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=mean, std=std),
-        ])
-
-    def __call__(self, x):
-        weak = self.weak(x)
-        strong1 = self.strong(x)
-        strong2 = self.strong(x)
-        return weak, strong1, strong2
 
 
 class STL10SSL(datasets.STL10):
@@ -332,39 +278,12 @@ def get_imagenet(args, root):
 
     train_unlabeled_dataset = IMAGENETSSL(
         root, train_unlabeled_idxs, train=True,
-        transform=TransformFixMatchImageNet(mean=imagenet_mean, std=imagenet_std))
+        transform=data_utils.TransformSSL(mean=imagenet_mean, std=imagenet_std, crop=224))
 
     test_dataset = datasets.ImageNet(
         root, train=False, transform=transform_val, download=False)
 
     return train_labeled_dataset, train_unlabeled_dataset, test_dataset
-
-
-class TransformFixMatchImageNet(object):
-    def __init__(self, mean, std):
-        self.weak = transforms.Compose([
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomCrop(size=224,
-                                  padding=int(4),
-                                  padding_mode='reflect'),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=mean, std=std)
-        ])
-        self.strong = transforms.Compose([
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomCrop(size=224,
-                                  padding=int(4),
-                                  padding_mode='reflect'),
-            RandAugmentMC(n=2, m=10),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=mean, std=std),
-        ])
-
-    def __call__(self, x):
-        weak = self.weak(x)
-        strong1 = self.strong(x)
-        strong2 = self.strong(x)
-        return weak, strong1, strong2
 
 
 class IMAGENETSSL(datasets.ImageNet):

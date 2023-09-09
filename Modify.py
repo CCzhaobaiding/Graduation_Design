@@ -32,7 +32,6 @@ def main():
                         help='dataset name')
     parser.add_argument('--num-labels', type=int, default=4000)
     parser.add_argument("--expand-labels", action="store_true", help="expand labels to fit eval steps")
-    parser.add_argument('--arch', default='wideresnet', type=str)
     parser.add_argument('--total-steps', default=2 ** 20, type=int)
     parser.add_argument('--eval-step', default=1024, type=int)
     parser.add_argument('--start-epoch', default=0, type=int)
