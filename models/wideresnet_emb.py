@@ -69,7 +69,6 @@ class NetworkBlock(nn.Module):
         return self.layer(x)
 
 
-# ------------------
 class Normalize(nn.Module):
 
     def __init__(self, power=2):
@@ -80,7 +79,6 @@ class Normalize(nn.Module):
         norm = x.pow(self.power).sum(1, keepdim=True).pow(1. / self.power)
         out = x.div(norm)
         return out
-# ------------------
 
 
 class WideResNet(nn.Module):
@@ -108,12 +106,11 @@ class WideResNet(nn.Module):
         self.fc = nn.Linear(channels[3], num_classes)
         self.channels = channels[3]
 
-        # ------------------
         low_dim = 64
         self.l2norm = Normalize(2)
         self.fc1 = nn.Linear(channels[3], channels[3])
         self.fc2 = nn.Linear(channels[3], low_dim)
-        # ------------------
+
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -142,7 +139,6 @@ class WideResNet(nn.Module):
         feat = self.fc2(feat)
         feat = self.l2norm(feat)
 
-        # return output
         return output, feat
 
 

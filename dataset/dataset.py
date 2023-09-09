@@ -1,15 +1,11 @@
 import logging
-import math
 
 import numpy as np
 from PIL import Image
 from torchvision import datasets
 from torchvision import transforms
-
 from . import data_utils
 from .randaugment import RandAugmentMC
-from torch.utils.data import Dataset
-import scipy.io as sio
 logger = logging.getLogger(__name__)
 
 cifar10_mean = (0.4914, 0.4822, 0.4465)
@@ -122,7 +118,7 @@ def get_svhn(args, root):
 
 
 class TransformFixMatch(object):
-    def __init__(self, mean, std):
+    def __init__(self, mean, std):  # 加CropSize合并
         self.weak = transforms.Compose([
             transforms.RandomHorizontalFlip(),
             transforms.RandomCrop(size=32,
@@ -238,10 +234,9 @@ def get_stl10(args, root):
         transforms.Normalize(mean=stl10_mean, std=stl10_std)
     ])
     train_labeled_dataset = datasets.STL10(root, split="train", download=True)
-    # train_labeled_idxs, train_unlabeled_idxs = data_utils.x_u_split(args, train_labeled_dataset.labels)
     train_labeled_idxs, _ = data_utils.x_u_split(args, train_labeled_dataset.labels)
     train_unlabeled_dataset = datasets.STL10(root, split="unlabeled", download=True)
-    train_unlabeled_idxs = np.array(range(len(train_unlabeled_dataset.labels)))
+    train_unlabeled_idxs = np.array(range(len(np.array(train_unlabeled_dataset.labels))))
 
     train_labeled_dataset = STL10SSL(
         root, split="train", indexs=train_labeled_idxs,
@@ -249,7 +244,6 @@ def get_stl10(args, root):
 
     train_unlabeled_dataset = STL10SSL(
         root, split="unlabeled", indexs=train_unlabeled_idxs,
-        # root, split="train", indexs=train_unlabeled_idxs,
         transform=TransformFixMatchSTL10(mean=stl10_mean, std=stl10_std))
 
     test_dataset = datasets.STL10(

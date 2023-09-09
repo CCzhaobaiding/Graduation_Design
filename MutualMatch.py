@@ -20,82 +20,54 @@ from dataset.dataset import DATASET_GETTERS
 from utils import AverageMeter, accuracy
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 logger = logging.getLogger(__name__)
-
 best_acc = 0
-
 
 def main():
     parser = argparse.ArgumentParser(description='PyTorch CrossMatch Training')
-    parser.add_argument('--gpu-id', default='0', type=int,
-                        help='id(s) for CUDA_VISIBLE_DEVICES')
-    parser.add_argument('--num-workers', type=int, default=4,
-                        help='number of workers')
-    parser.add_argument('--dataset', default='cifar10', type=str,
-                        choices=['cifar10', 'cifar100', 'stl10', 'svhn'],
-                        help='dataset name')
+    parser.add_argument('--gpu-id', default='0', type=int, help='id(s) for CUDA_VISIBLE_DEVICES')
+    parser.add_argument('--num-workers', type=int, default=4, help='number of workers')
+    parser.add_argument('--dataset', default='cifar10', type=str, choices=['cifar10', 'cifar100', 'stl10', 'svhn'], help='dataset name')
     parser.add_argument('--num-labels', type=int, default=4000)
-    parser.add_argument("--expand-labels", action="store_true",
-                        help="expand labels to fit eval steps")
+    parser.add_argument("--expand-labels", action="store_true", help="expand labels to fit eval steps")
     parser.add_argument('--arch', default='wideresnet', type=str)
-    parser.add_argument('--total-steps', default=2**20, type=int,
-                        help='number of total steps to run')
-    parser.add_argument('--eval-step', default=1024, type=int,
-                        help='number of eval steps to run')
-    parser.add_argument('--start-epoch', default=0, type=int,
-                        help='manual epoch number (useful on restarts)')
-    parser.add_argument('--batch-size', default=64, type=int,
-                        help='train batchsize')
-    parser.add_argument('--lr', '--learning-rate', default=0.05, type=float,
-                        help='initial learning rate')
-    parser.add_argument('--warmup', default=0, type=float,
-                        help='warmup epochs (unlabeled data based)')
-    parser.add_argument('--wdecay', default=5e-4, type=float,
-                        help='weight decay')
-    parser.add_argument('--nesterov', action='store_true', default=True,
-                        help='use nesterov momentum')
-    parser.add_argument('--use-ema', action='store_true', default=True,
-                        help='use EMA model')
-    parser.add_argument('--ema-decay', default=0.999, type=float,
-                        help='EMA decay rate')
-    parser.add_argument('--mu', default=7, type=int,
-                        help='coefficient of unlabeled batch size')
-    parser.add_argument('--lambda-u', default=1, type=float,
-                        help='coefficient of unlabeled loss')
+    parser.add_argument('--total-steps', default=2**20, type=int)
+    parser.add_argument('--eval-step', default=1024, type=int)
+    parser.add_argument('--start-epoch', default=0, type=int)
+    parser.add_argument('--batch-size', default=64, type=int)
+    parser.add_argument('--lr', '--learning-rate', default=0.05, type=float)
+    parser.add_argument('--warmup', default=0, type=float)
+    parser.add_argument('--wdecay', default=5e-4, type=float, help='weight decay')
+    parser.add_argument('--nesterov', action='store_true', default=True, help='use nesterov momentum')
+    parser.add_argument('--use-ema', action='store_true', default=True, help='use EMA model')
+    parser.add_argument('--ema-decay', default=0.999, type=float, help='EMA decay rate')
+    parser.add_argument('--mu', default=7, type=int, help='coefficient of unlabeled batch size')
+    parser.add_argument('--lambda-u', default=1, type=float)
     parser.add_argument('--lambda-dif', default=1, type=float)
     parser.add_argument('--lambda-con', default=1, type=float)
     parser.add_argument('--lambda-com', default=1, type=float)
-    parser.add_argument('--T', default=1, type=float,
-                        help='pseudo label temperature')
-    parser.add_argument('--ST', default=0.8, type=float)
-    parser.add_argument('--temperature', default=0.2, type=float,
-                        help='softmax temperature')
-    parser.add_argument('--threshold', default=0.95, type=float,
-                        help='pseudo label threshold')
+    parser.add_argument('--T', default=1, type=float, help='pseudo label temperature')
+    # 锐化温度
+    parser.add_argument('--ST', default=0.8, type=float, help='sharpen temperature')
+    parser.add_argument('--temperature', default=0.2, type=float, help='softmax temperature')
+    parser.add_argument('--threshold', default=0.95, type=float, help='pseudo label threshold')
     # 图半监督阈值
-    parser.add_argument('--contrast-th', default=0.8, type=float,
-                        help='pseudo label graph threshold')
-    parser.add_argument('--out', default='result',
-                        help='directory to output the result')
-    parser.add_argument('--resume', default='', type=str,
-                        help='path to latest checkpoint (default: none)')
-    parser.add_argument('--seed', default=None, type=int,
-                        help="random seed")
-    parser.add_argument("--local_rank", type=int, default=-1,
-                        help="For distributed training: local_rank")
-    parser.add_argument('--no-progress', action='store_true',
-                        help="don't use progress bar")
-
+    parser.add_argument('--contrast-th', default=0.8, type=float, help='pseudo label graph threshold')
+    parser.add_argument('--out', default='result', help='directory to output the result')
+    parser.add_argument('--resume', default='', type=str, help='path to latest checkpoint (default: none)')
+    parser.add_argument('--seed', default=None, type=int, help="random seed")
+    parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
+    parser.add_argument('--no-progress', action='store_true', help="don't use progress bar")
     args = parser.parse_args()
 
-    global best_acc
-
-
     def create_model(args):
-        import models.wideresnet_emb as models
-        model = models.build_wideresnet(depth=args.model_depth,
+        if args.dataset != 'imagenet':
+            import models.wideresnet_emb as models
+            model = models.build_wideresnet(depth=args.model_depth,
                                             widen_factor=args.model_width,
                                             dropout=0,
                                             num_classes=args.num_classes)
+        else:
+            logger.info("model of imagenet")
         logger.info("Total params: {:.2f}M".format(
             sum(p.numel() for p in model.parameters())/1e6))
         return model
@@ -221,14 +193,13 @@ def main():
     scheduler2 = get_cosine_schedule_with_warmup(
         optimizer2, args.warmup, args.total_steps)
 
-
     if args.use_ema:
         from models.ema import ModelEMA
         ema_model1 = ModelEMA(args, model1, args.ema_decay)
         ema_model2 = ModelEMA(args, model2, args.ema_decay)
 
     args.start_epoch = 0
-
+    global best_acc
     if args.resume:
         logger.info("==> Resuming from checkpoint..")
         assert os.path.isfile(
@@ -315,7 +286,6 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
           model1, optimizer1, ema_model1, scheduler1, model2, optimizer2, ema_model2, scheduler2):
 
     global best_acc
-
     test_accs = []
     end = time.time()
 
