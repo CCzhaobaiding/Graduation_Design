@@ -161,13 +161,13 @@ def main():
 
         _eval_dset = SSL_Dataset(args, alg='fixmatch', name=args.dataset, train=False,
                                 num_classes=args.num_classes, data_dir=args.data_dir)
-        eval_dataset = _eval_dset.get_dset()
+        test_dataset = _eval_dset.get_dset()
     else:
         image_loader = ImageNetLoader(root_path=args.data_dir, num_labels=args.num_labels,
                                       num_class=args.num_classes)
         labeled_dataset = image_loader.get_lb_train_data()
         unlabeled_dataset = image_loader.get_ulb_train_data()
-        eval_dataset = image_loader.get_lb_test_data()
+        test_dataset = image_loader.get_lb_test_data()
 
     if args.local_rank == 0:
         torch.distributed.barrier()
@@ -188,9 +188,9 @@ def main():
         num_workers=args.num_workers,
         drop_last=True)
 
-    eval_loader = DataLoader(
-        eval_dataset,
-        sampler=SequentialSampler(eval_dataset),
+    test_loadar = DataLoader(
+        test_dataset,
+        sampler=SequentialSampler(test_dataset),
         batch_size=args.batch_size,
         num_workers=args.num_workers)
 
@@ -276,7 +276,7 @@ def main():
 
     model1.zero_grad()
     model2.zero_grad()
-    train(args, labeled_trainloader, unlabeled_trainloader, eval_loader,
+    train(args, labeled_trainloader, unlabeled_trainloader, test_loadar,
           model1, optimizer1, ema_model1, scheduler1, model2, optimizer2, ema_model2, scheduler2)
 
 
@@ -321,7 +321,7 @@ def de_interleave(x, size):
     return x.reshape([size, -1] + s[1:]).transpose(0, 1).reshape([-1] + s[1:])
 
 
-def train(args, labeled_trainloader, unlabeled_trainloader, eval_loader,
+def train(args, labeled_trainloader, unlabeled_trainloader, test_loadar,
           model1, optimizer1, ema_model1, scheduler1, model2, optimizer2, ema_model2, scheduler2):
     global best_acc
     test_accs = []
@@ -538,7 +538,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, eval_loader,
             test_model = model1
 
         if args.local_rank in [-1, 0]:
-            test_loss, test_acc = test(args, eval_loader, test_model, epoch)
+            test_loss, test_acc = test(args, test_loadar, test_model, epoch)
 
             args.writer.add_scalar('train/1.train_loss', losses.avg, epoch)
             args.writer.add_scalar('train/2.train_loss_labeled', losses_labeled.avg, epoch)
@@ -584,7 +584,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, eval_loader,
         args.writer.close()
 
 
-def test(args, eval_loader, model, epoch):
+def test(args, test_loadar, model, epoch):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -593,11 +593,11 @@ def test(args, eval_loader, model, epoch):
     end = time.time()
 
     if not args.no_progress:
-        eval_loader = tqdm(eval_loader,
+        test_loadar = tqdm(test_loadar,
                            disable=args.local_rank not in [-1, 0])
 
     with torch.no_grad():
-        for batch_idx, (inputs, targets) in enumerate(eval_loader):
+        for batch_idx, (inputs, targets) in enumerate(test_loadar):
             data_time.update(time.time() - end)
             model.eval()
 
@@ -613,9 +613,9 @@ def test(args, eval_loader, model, epoch):
             batch_time.update(time.time() - end)
             end = time.time()
         #     if not args.no_progress:
-        #         eval_loader.set_description("Test Iter: {batch:4}/{iter:4}. Data: {data:.3f}s. Batch: {bt:.3f}s. Loss: {loss:.4f}. top1: {top1:.2f}. top5: {top5:.2f}. ".format(
+        #         test_loadar.set_description("Test Iter: {batch:4}/{iter:4}. Data: {data:.3f}s. Batch: {bt:.3f}s. Loss: {loss:.4f}. top1: {top1:.2f}. top5: {top5:.2f}. ".format(
         #             batch=batch_idx + 1,
-        #             iter=len(eval_loader),
+        #             iter=len(test_loadar),
         #             data=data_time.avg,
         #             bt=batch_time.avg,
         #             loss=losses.avg,
@@ -623,7 +623,7 @@ def test(args, eval_loader, model, epoch):
         #             top5=top5.avg,
         #         ))
         # if not args.no_progress:
-        #     eval_loader.close()
+        #     test_loadar.close()
 
     logger.info("top-1 acc: {:.2f}".format(top1.avg))
     logger.info("top-5 acc: {:.2f}".format(top5.avg))
