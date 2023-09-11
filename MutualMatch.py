@@ -18,7 +18,7 @@ from tqdm import tqdm
 from dataset.dataset import DATASET_GETTERS
 from utils import AverageMeter, accuracy
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 logger = logging.getLogger(__name__)
 best_acc = 0
 

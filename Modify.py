@@ -15,11 +15,12 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+from dataset.dataUtils import get_data_loader
 from dataset.dataset import DATASET_GETTERS
 from dataset.sslDataset import SSL_Dataset, ImageNetLoader
 from utils import AverageMeter, accuracy
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
 logger = logging.getLogger(__name__)
 best_acc = 0
 
@@ -28,6 +29,7 @@ def main():
     parser = argparse.ArgumentParser(description='PyTorch CrossMatch Training')
     parser.add_argument('--gpu-id', default='0', type=int, help='id(s) for CUDA_VISIBLE_DEVICES')
     parser.add_argument('--num-workers', type=int, default=4, help='number of workers')
+    parser.add_argument('--data_dir', type=str, default='./data')
     parser.add_argument('--dataset', default='cifar10', type=str, choices=['cifar10', 'cifar100', 'stl10', 'svhn'],
                         help='dataset name')
     parser.add_argument('--num-labels', type=int, default=4000)
@@ -139,28 +141,13 @@ def main():
     # labeled_dataset, unlabeled_dataset, test_dataset = DATASET_GETTERS[args.dataset](
     #     args, './data')
     if args.dataset != "imagenet":
-        if args.num_labels == 10 and args.dataset == 'cifar10':
-            fixmatch_index = [
-                [7408, 8148, 9850, 10361, 33949, 36506, 37018, 45044, 46443, 47447],
-                [5022, 8193, 8902, 9601, 25226, 26223, 34089, 35186, 40595, 48024],
-                [7510, 13186, 14043, 21305, 22805, 31288, 34508, 40470, 41493, 45506],
-                [9915, 9978, 16631, 19915, 28008, 35314, 35801, 36149, 39215, 42557],
-                [6695, 14891, 19726, 22715, 23999, 34230, 46511, 47457, 49181, 49397],
-                [12830, 20293, 26835, 30517, 30898, 31061, 43693, 46501, 47310, 48517],
-                [1156, 11501, 19974, 21963, 32103, 42189, 46789, 47690, 48229, 48675],
-                [4255, 6446, 8580, 11759, 12598, 29349, 29433, 33759, 35345, 38639]]
-            index = fixmatch_index[-args.seed - 1]
-            print("10 labels for cifar10")
-        else:
-            index = None
+        index = None
 
-
-        train_dset = SSL_Dataset(args, alg='fixmatch', name=args.dataset, train=True,
-                                num_classes=args.num_classes, data_dir=args.data_dir)
-        labeled_dataset, unlabeled_dataset = train_dset.get_ssl_dset(args.num_labels,index=index)
-
-        _eval_dset = SSL_Dataset(args, alg='fixmatch', name=args.dataset, train=False,
-                                num_classes=args.num_classes, data_dir=args.data_dir)
+        train_dset = SSL_Dataset(args, name=args.dataset, train=True,
+                                 num_classes=args.num_classes, data_dir=args.data_dir)
+        labeled_dataset, unlabeled_dataset = train_dset.get_ssl_dset(args.num_labels, index=index)
+        _eval_dset = SSL_Dataset(args, name=args.dataset, train=False,
+                                 num_classes=args.num_classes, data_dir=args.data_dir)
         test_dataset = _eval_dset.get_dset()
     else:
         image_loader = ImageNetLoader(root_path=args.data_dir, num_labels=args.num_labels,
@@ -174,25 +161,48 @@ def main():
 
     train_sampler = RandomSampler if args.local_rank == -1 else DistributedSampler
 
-    labeled_trainloader = DataLoader(
-        labeled_dataset,
-        sampler=train_sampler(labeled_dataset),
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        drop_last=True)
+    # labeled_trainloader = DataLoader(
+    #     labeled_dataset,
+    #     sampler=train_sampler(labeled_dataset),
+    #     batch_size=args.batch_size,
+    #     num_workers=args.num_workers,
+    #     drop_last=True)
+    #
+    # unlabeled_trainloader = DataLoader(
+    #     unlabeled_dataset,
+    #     sampler=train_sampler(unlabeled_dataset),
+    #     batch_size=args.batch_size * args.mu,
+    #     num_workers=args.num_workers,
+    #     drop_last=True)
+    #
+    # test_loader = DataLoader(
+    #     test_dataset,
+    #     sampler=SequentialSampler(test_dataset),
+    #     batch_size=args.batch_size,
+    #     num_workers=args.num_workers)
+    # print("++++++++++++++++++++++++++")
+    # print(len(labeled_trainloader))
+    # print(len(unlabeled_trainloader))
+    # print(len(test_loader))
 
-    unlabeled_trainloader = DataLoader(
-        unlabeled_dataset,
-        sampler=train_sampler(unlabeled_dataset),
-        batch_size=args.batch_size * args.mu,
-        num_workers=args.num_workers,
-        drop_last=True)
+    loader_dict = {}
+    dset_dict = {'train_lb': labeled_dataset, 'train_ulb': unlabeled_dataset, 'eval': test_dataset}
+    loader_dict['train_lb'] = get_data_loader(dset_dict['train_lb'],
+                                              args.batch_size,
+                                              data_sampler=train_sampler,
+                                              num_iters=args.total_steps,
+                                              num_workers=args.num_workers)
 
-    test_loadar = DataLoader(
-        test_dataset,
-        sampler=SequentialSampler(test_dataset),
-        batch_size=args.batch_size,
-        num_workers=args.num_workers)
+    loader_dict['train_ulb'] = get_data_loader(dset_dict['train_ulb'],
+                                               args.batch_size * args.mu,
+                                               data_sampler=train_sampler,
+                                               num_iters=args.total_steps,
+                                               num_workers=4 * args.num_workers)
+
+    loader_dict['eval'] = get_data_loader(dset_dict['eval'],
+                                          args.batch_size,
+                                          num_workers=args.num_workers,
+                                          drop_last=False)
 
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()
@@ -229,7 +239,6 @@ def main():
     optimizer2 = optim.SGD(grouped_parameters2, lr=args.lr,
                            momentum=0.9, nesterov=args.nesterov)
 
-    args.epochs = math.ceil(args.total_steps / args.eval_step)
     scheduler2 = get_cosine_schedule_with_warmup(
         optimizer2, args.warmup, args.total_steps)
 
@@ -276,7 +285,7 @@ def main():
 
     model1.zero_grad()
     model2.zero_grad()
-    train(args, labeled_trainloader, unlabeled_trainloader, test_loadar,
+    train(args, loader_dict,
           model1, optimizer1, ema_model1, scheduler1, model2, optimizer2, ema_model2, scheduler2)
 
 
@@ -321,7 +330,7 @@ def de_interleave(x, size):
     return x.reshape([size, -1] + s[1:]).transpose(0, 1).reshape([-1] + s[1:])
 
 
-def train(args, labeled_trainloader, unlabeled_trainloader, test_loadar,
+def train(args, loader_dict,
           model1, optimizer1, ema_model1, scheduler1, model2, optimizer2, ema_model2, scheduler2):
     global best_acc
     test_accs = []
@@ -330,11 +339,11 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loadar,
     if args.world_size > 1:
         labeled_epoch = 0
         unlabeled_epoch = 0
-        labeled_trainloader.sampler.set_epoch(labeled_epoch)
-        unlabeled_trainloader.sampler.set_epoch(unlabeled_epoch)
+        # labeled_trainloader.sampler.set_epoch(labeled_epoch)
+        # unlabeled_trainloader.sampler.set_epoch(unlabeled_epoch)
 
-    labeled_iter = iter(labeled_trainloader)
-    unlabeled_iter = iter(unlabeled_trainloader)
+    labeled_iter = iter(loader_dict['train_lb'])
+    unlabeled_iter = iter(loader_dict['train_ulb'])
 
     model1.train()
     model2.train()
@@ -361,21 +370,15 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loadar,
 
         for batch_idx in range(args.eval_step):
             try:
-                inputs_x, targets_x = labeled_iter.next()
+                _, inputs_x, targets_x = labeled_iter.next()
             except:
-                if args.world_size > 1:
-                    labeled_epoch += 1
-                    labeled_trainloader.sampler.set_epoch(labeled_epoch)
-                labeled_iter = iter(labeled_trainloader)
-                inputs_x, targets_x = labeled_iter.next()
+                labeled_iter = iter(loader_dict['train_lb'])
+                _, inputs_x, targets_x = labeled_iter.next()
             try:
-                (inputs_u_w, inputs_u_s1, inputs_u_s2), _ = unlabeled_iter.next()
+                _, inputs_u_w, inputs_u_s1, inputs_u_s2 = unlabeled_iter.next()
             except:
-                if args.world_size > 1:
-                    unlabeled_epoch += 1
-                    unlabeled_trainloader.sampler.set_epoch(unlabeled_epoch)
-                unlabeled_iter = iter(unlabeled_trainloader)
-                (inputs_u_w, inputs_u_s1, inputs_u_s2), _ = unlabeled_iter.next()
+                unlabeled_iter = iter(loader_dict['train_ulb'])
+                _, inputs_u_w, inputs_u_s1, inputs_u_s2 = unlabeled_iter.next()
 
             data_time.update(time.time() - end)
             batch_size = inputs_x.shape[0]
@@ -509,28 +512,28 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loadar,
             mask_probs1.update(mask1.mean().item())
             mask_probs2.update(mask1.mean().item())
 
-        #     if not args.no_progress:
-        #         p_bar.set_description("Train Epoch: {epoch}/{epochs:4}. Iter: {batch:4}/{iter:4}. LR1: {lr1:.4f}. LR2: {lr2:.4f}. Data: {data:.3f}s. Batch: {bt:.3f}s. Loss: {loss:.4f}. Loss_labeled: {loss_labeled:.4f}. Loss_unlabeled: {loss_unlabeled:.4f}. Loss_cross_dif: {loss_cross_dif:.4f}. Loss_cross_con: {loss_cross_con:.4f}. Loss_graph_com: {loss_graph_com:.4f}. Mask1: {mask1:.2f}. Mask2: {mask2:.2f}.".format(
-        #             epoch=epoch + 1,
-        #             epochs=args.epochs,
-        #             batch=batch_idx + 1,
-        #             iter=args.eval_step,
-        #             lr1=scheduler1.get_last_lr()[0],
-        #             lr2=scheduler2.get_last_lr()[0],
-        #             data=data_time.avg,
-        #             bt=batch_time.avg,
-        #             loss=losses.avg,
-        #             loss_labeled=losses_labeled.avg,
-        #             loss_unlabeled=losses_unlabeled.avg,
-        #             loss_cross_dif=losses_cross_dif.avg,
-        #             loss_cross_con=losses_cross_con.avg,
-        #             loss_graph_com=losses_graph_com.avg,
-        #             mask1=mask_probs1.avg,
-        #             mask2=mask_probs2.avg))
-        #         p_bar.update()
-        #
-        # if not args.no_progress:
-        #     p_bar.close()
+            # if not args.no_progress:
+            #     p_bar.set_description("Train Epoch: {epoch}/{epochs:4}. Iter: {batch:4}/{iter:4}. LR1: {lr1:.4f}. LR2: {lr2:.4f}. Data: {data:.3f}s. Batch: {bt:.3f}s. Loss: {loss:.4f}. Loss_labeled: {loss_labeled:.4f}. Loss_unlabeled: {loss_unlabeled:.4f}. Loss_cross_dif: {loss_cross_dif:.4f}. Loss_cross_con: {loss_cross_con:.4f}. Loss_graph_com: {loss_graph_com:.4f}. Mask1: {mask1:.2f}. Mask2: {mask2:.2f}.".format(
+            #         epoch=epoch + 1,
+            #         epochs=args.epochs,
+            #         batch=batch_idx + 1,
+            #         iter=args.eval_step,
+            #         lr1=scheduler1.get_last_lr()[0],
+            #         lr2=scheduler2.get_last_lr()[0],
+            #         data=data_time.avg,
+            #         bt=batch_time.avg,
+            #         loss=losses.avg,
+            #         loss_labeled=losses_labeled.avg,
+            #         loss_unlabeled=losses_unlabeled.avg,
+            #         loss_cross_dif=losses_cross_dif.avg,
+            #         loss_cross_con=losses_cross_con.avg,
+            #         loss_graph_com=losses_graph_com.avg,
+            #         mask1=mask_probs1.avg,
+            #         mask2=mask_probs2.avg))
+            #     p_bar.update()
+
+        if not args.no_progress:
+            p_bar.close()
 
         if args.use_ema:
             test_model = ema_model1.ema
@@ -538,7 +541,8 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loadar,
             test_model = model1
 
         if args.local_rank in [-1, 0]:
-            test_loss, test_acc = test(args, test_loadar, test_model, epoch)
+            test_loader = loader_dict['eval']
+            test_loss, test_acc = test(args, test_loader, test_model, epoch)
 
             args.writer.add_scalar('train/1.train_loss', losses.avg, epoch)
             args.writer.add_scalar('train/2.train_loss_labeled', losses_labeled.avg, epoch)
@@ -584,7 +588,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loadar,
         args.writer.close()
 
 
-def test(args, test_loadar, model, epoch):
+def test(args, test_loader, model, epoch):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -593,11 +597,11 @@ def test(args, test_loadar, model, epoch):
     end = time.time()
 
     if not args.no_progress:
-        test_loadar = tqdm(test_loadar,
+        test_loader = tqdm(test_loader,
                            disable=args.local_rank not in [-1, 0])
 
     with torch.no_grad():
-        for batch_idx, (inputs, targets) in enumerate(test_loadar):
+        for (batch_idx, inputs, targets) in test_loader:
             data_time.update(time.time() - end)
             model.eval()
 
@@ -613,9 +617,9 @@ def test(args, test_loadar, model, epoch):
             batch_time.update(time.time() - end)
             end = time.time()
         #     if not args.no_progress:
-        #         test_loadar.set_description("Test Iter: {batch:4}/{iter:4}. Data: {data:.3f}s. Batch: {bt:.3f}s. Loss: {loss:.4f}. top1: {top1:.2f}. top5: {top5:.2f}. ".format(
+        #         test_loader.set_description("Test Iter: {batch:4}/{iter:4}. Data: {data:.3f}s. Batch: {bt:.3f}s. Loss: {loss:.4f}. top1: {top1:.2f}. top5: {top5:.2f}. ".format(
         #             batch=batch_idx + 1,
-        #             iter=len(test_loadar),
+        #             iter=len(test_loader),
         #             data=data_time.avg,
         #             bt=batch_time.avg,
         #             loss=losses.avg,
@@ -623,7 +627,7 @@ def test(args, test_loadar, model, epoch):
         #             top5=top5.avg,
         #         ))
         # if not args.no_progress:
-        #     test_loadar.close()
+        #     test_loader.close()
 
     logger.info("top-1 acc: {:.2f}".format(top1.avg))
     logger.info("top-5 acc: {:.2f}".format(top5.avg))
