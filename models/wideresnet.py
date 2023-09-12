@@ -69,6 +69,18 @@ class NetworkBlock(nn.Module):
         return self.layer(x)
 
 
+class Normalize(nn.Module):
+
+    def __init__(self, power=2):
+        super(Normalize, self).__init__()
+        self.power = power
+
+    def forward(self, x):
+        norm = x.pow(self.power).sum(1, keepdim=True).pow(1. / self.power)
+        out = x.div(norm)
+        return out
+
+
 class WideResNet(nn.Module):
     def __init__(self, num_classes, depth=28, widen_factor=2, drop_rate=0.0):
         super(WideResNet, self).__init__()
@@ -94,6 +106,11 @@ class WideResNet(nn.Module):
         self.fc = nn.Linear(channels[3], num_classes)
         self.channels = channels[3]
 
+        low_dim = 64
+        self.l2norm = Normalize(2)
+        self.fc1 = nn.Linear(self.channels, self.channels)
+        self.fc2 = nn.Linear(self.channels, low_dim)
+
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight,
@@ -114,7 +131,14 @@ class WideResNet(nn.Module):
         out = self.relu(self.bn1(out))
         out = F.adaptive_avg_pool2d(out, 1)
         out = out.view(-1, self.channels)
-        return self.fc(out)
+        output = self.fc(out)
+
+        feat = self.fc1(out)
+        feat = self.relu(feat)
+        feat = self.fc2(feat)
+        feat = self.l2norm(feat)
+
+        return output, feat
 
 
 def build_wideresnet(depth, widen_factor, dropout, num_classes):

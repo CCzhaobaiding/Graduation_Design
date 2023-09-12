@@ -77,12 +77,9 @@ def main():
     def create_model(args):
         if args.dataset == 'imagenet':
             import models.resnet50 as models
-            model = models.build_ResNet50(depth=args.model_depth,
-                                          widen_factor=args.model_width,
-                                          dropout=0,
-                                          num_classes=args.num_classes)
+            model = models.build_ResNet50(num_classes=args.num_classes)
         else:
-            import models.wideresnet_emb as models
+            import models.wideresnet as models
             model = models.build_wideresnet(depth=args.model_depth,
                                             widen_factor=args.model_width,
                                             dropout=0,

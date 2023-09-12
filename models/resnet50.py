@@ -1,6 +1,3 @@
-"""
-from https://github.com/pytorch/vision/blob/master/torchvision/models/resnet.py
-"""
 import torch
 from torch import Tensor
 import torch.nn as nn
@@ -39,7 +36,6 @@ class BasicBlock(nn.Module):
             raise ValueError('BasicBlock only supports groups=1 and base_width=64')
         if dilation > 1:
             raise NotImplementedError("Dilation > 1 not supported in BasicBlock")
-        # Both self.conv1 and self.downsample layers downsample the input when stride != 1
         self.conv1 = conv3x3(inplanes, planes, stride)
         self.bn1 = norm_layer(planes)
         self.relu = nn.ReLU(inplace=True)
@@ -68,11 +64,6 @@ class BasicBlock(nn.Module):
 
 
 class Bottleneck(nn.Module):
-    # Bottleneck in torchvision places the stride for downsampling at 3x3 convolution(self.conv2)
-    # while original implementation places the stride at the first 1x1 convolution(self.conv1)
-    # according to "Deep residual learning for image recognition"https://arxiv.org/abs/1512.03385.
-    # This variant is also known as ResNet V1.5 and improves accuracy according to
-    # https://ngc.nvidia.com/catalog/model-scripts/nvidia:resnet_50_v1_5_for_pytorch.
 
     expansion: int = 4
 
@@ -91,7 +82,6 @@ class Bottleneck(nn.Module):
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         width = int(planes * (base_width / 64.)) * groups
-        # Both self.conv2 and self.downsample layers downsample the input when stride != 1
         self.conv1 = conv1x1(inplanes, width)
         self.bn1 = norm_layer(width)
         self.conv2 = conv3x3(width, width, stride, groups, dilation)
@@ -125,6 +115,18 @@ class Bottleneck(nn.Module):
         return out
 
 
+class Normalize(nn.Module):
+
+    def __init__(self, power=2):
+        super(Normalize, self).__init__()
+        self.power = power
+
+    def forward(self, x):
+        norm = x.pow(self.power).sum(1, keepdim=True).pow(1. / self.power)
+        out = x.div(norm)
+        return out
+
+
 class ResNet50(nn.Module):
 
     def __init__(
@@ -136,8 +138,7 @@ class ResNet50(nn.Module):
             groups: int = 1,
             width_per_group: int = 64,
             replace_stride_with_dilation: Optional[List[bool]] = None,
-            norm_layer: Optional[Callable[..., nn.Module]] = None,
-            is_remix=False
+            norm_layer: Optional[Callable[..., nn.Module]] = None
     ) -> None:
         super(ResNet50, self).__init__()
         if norm_layer is None:
@@ -147,8 +148,6 @@ class ResNet50(nn.Module):
         self.inplanes = 64
         self.dilation = 1
         if replace_stride_with_dilation is None:
-            # each element in the tuple indicates if we should replace
-            # the 2x2 stride with a dilated convolution instead
             replace_stride_with_dilation = [False, False, False]
         if len(replace_stride_with_dilation) != 3:
             raise ValueError("replace_stride_with_dilation should be None "
@@ -169,11 +168,12 @@ class ResNet50(nn.Module):
                                        dilate=replace_stride_with_dilation[2])
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, n_class)
+        self.expansion = 512 * block.expansion
 
-        # rot_classifier for Remix Match
-        self.is_remix = is_remix
-        if is_remix:
-            self.rot_classifier = nn.Linear(2048, 4)
+        low_dim = 64
+        self.l2norm = Normalize(2)
+        self.fc1 = nn.Linear(self.expansion, 512 * self.expansion)
+        self.fc2 = nn.Linear(self.expansion, low_dim)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -182,9 +182,6 @@ class ResNet50(nn.Module):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
 
-        # Zero-initialize the last BN in each residual branch,
-        # so that the residual branch starts with zeros, and each residual block behaves like an identity.
-        # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
         if zero_init_residual:
             for m in self.modules():
                 if isinstance(m, Bottleneck):
@@ -232,27 +229,16 @@ class ResNet50(nn.Module):
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         out = self.fc(x)
-        if self.is_remix:
-            rot_output = self.rot_classifier(x)
-            return out, rot_output
-        else:
-            return out
+
+        feat = self.fc1(x)
+        feat = self.relu(feat)
+        feat = self.fc2(feat)
+        feat = self.l2norm(feat)
+        return out, feat
 
     def forward(self, x):
         return self._forward_impl(x)
 
 
-class build_ResNet50:
-    def __init__(self, is_remix=False):
-        self.is_remix = is_remix
-
-    def build(self, num_classes):
-        return ResNet50(n_class=num_classes, is_remix=self.is_remix)
-
-
-if __name__ == '__main__':
-    a = torch.rand(16, 3, 224, 224)
-    net = ResNet50(is_remix=True)
-    x,y = net(a)
-    print(x.shape)
-    print(y.shape)
+def build_ResNet50(num_classes):
+        return ResNet50(n_class=num_classes)

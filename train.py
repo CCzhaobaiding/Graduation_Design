@@ -130,7 +130,7 @@ def main():
 
     def create_model(args):
         if args.arch == 'wideresnet':
-            import models.wideresnet as models
+            import models.wrn as models
             model = models.build_wideresnet(depth=args.model_depth,
                                             widen_factor=args.model_width,
                                             dropout=0,
