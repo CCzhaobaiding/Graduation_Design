@@ -11,14 +11,14 @@ import torch.nn.functional as F
 from torch import nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR
-from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
-from torch.utils.data.distributed import DistributedSampler
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+import torch.distributed as dist
+from dataset.dataUtils import get_data_loader
 from dataset.sslDataset import SSL_Dataset, ImageNetLoader
 from utils import AverageMeter, accuracy
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
 logger = logging.getLogger(__name__)
 best_acc = 0
 
@@ -33,6 +33,7 @@ def main():
     parser.add_argument('--num-labels', type=int, default=4000)
     parser.add_argument("--expand-labels", action="store_true", help="expand labels to fit eval steps")
     parser.add_argument('--total-steps', default=2 ** 20, type=int)
+    parser.add_argument('--train-sampler', type=str, default='RandomSampler')
     parser.add_argument('--eval-step', default=1024, type=int)
     parser.add_argument('--start-epoch', default=0, type=int)
     parser.add_argument('--batch-size', default=64, type=int)
@@ -76,13 +77,7 @@ def main():
 
     # shoose model
     def create_model(args):
-        if args.dataset == 'stl10':
-            import models.wideresnet_emb as models
-            model = models.build_wideresnet(depth=args.model_depth,
-                                               widen_factor=args.model_width,
-                                               dropout=0,
-                                               num_classes=args.num_classes)
-        elif args.dataset == 'imagenet':
+        if args.dataset == 'imagenet':
             import models.resnet50 as models
             model = models.build_ResNet50(depth=args.model_depth,
                                           widen_factor=args.model_width,
@@ -135,16 +130,13 @@ def main():
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()
 
-    # dataset
-    # labeled_dataset, unlabeled_dataset, test_dataset = DATASET_GETTERS[args.dataset](
-    #     args, './data')
     if args.dataset != "imagenet":
         train_dset = SSL_Dataset(args, name=args.dataset, train=True,
                                  num_classes=args.num_classes, data_dir=args.data_dir)
         labeled_dataset, unlabeled_dataset = train_dset.get_ssl_dset(args.num_labels)
-        _eval_dset = SSL_Dataset(args, name=args.dataset, train=False,
+        _test_dset = SSL_Dataset(args, name=args.dataset, train=False,
                                  num_classes=args.num_classes, data_dir=args.data_dir)
-        test_dataset = _eval_dset.get_dset()
+        test_dataset = _test_dset.get_dset()
     else:
         image_loader = ImageNetLoader(root_path=args.data_dir, num_labels=args.num_labels,
                                       num_class=args.num_classes)
@@ -155,47 +147,27 @@ def main():
     if args.local_rank == 0:
         torch.distributed.barrier()
 
-    train_sampler = RandomSampler if args.local_rank == -1 else DistributedSampler
+    args.distributed = args.local_rank == 0
     loader_dict = {}
-    dset_dict = {'train_lb': labeled_dataset, 'train_ulb': unlabeled_dataset, 'eval': test_dataset}
-    loader_dict['train_lb'] = DataLoader(
-        dset_dict['train_lb'],
-        sampler=train_sampler(dset_dict['train_lb']),
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        drop_last=True)
+    dset_dict = {'train_lb': labeled_dataset, 'train_ulb': unlabeled_dataset, 'test': test_dataset}
+    loader_dict['train_lb'] = get_data_loader(dset_dict['train_lb'],
+                                              args.batch_size,
+                                              data_sampler=args.train_sampler,
+                                              num_iters=args.eval_step,
+                                              num_workers=args.num_workers,
+                                              distributed=args.distributed)
 
-    loader_dict['train_ulb'] = DataLoader(
-        dset_dict['train_ulb'],
-        sampler=train_sampler(dset_dict['train_ulb']),
-        batch_size=args.batch_size * args.mu,
-        num_workers=args.num_workers,
-        drop_last=True)
+    loader_dict['train_ulb'] = get_data_loader(dset_dict['train_ulb'],
+                                               args.batch_size * args.mu,
+                                               data_sampler=args.train_sampler,
+                                               num_iters=args.eval_step,
+                                               num_workers=4 * args.num_workers,
+                                               distributed=args.distributed)
 
-    loader_dict['eval'] = DataLoader(
-        dset_dict['eval'],
-        sampler=SequentialSampler(dset_dict['eval']),
-        batch_size=args.batch_size,
-        num_workers=args.num_workers)
-
-
-    # loader_dict['train_lb'] = get_data_loader(dset_dict['train_lb'],
-    #                                           args.batch_size,
-    #                                           data_sampler=train_sampler,
-    #                                           num_iters=args.total_steps,
-    #                                           num_workers=args.num_workers)
-    #
-    # loader_dict['train_ulb'] = get_data_loader(dset_dict['train_ulb'],
-    #                                            args.batch_size * args.mu,
-    #                                            data_sampler=train_sampler,
-    #                                            num_iters=args.total_steps,
-    #                                            num_workers=4 * args.num_workers)
-    #
-    # loader_dict['eval'] = get_data_loader(dset_dict['eval'],
-    #                                       args.batch_size,
-    #                                       num_workers=args.num_workers,
-    #                                       drop_last=False)
-
+    loader_dict['test'] = get_data_loader(dset_dict['test'],
+                                          args.batch_size,
+                                          num_workers=1,
+                                          drop_last=False)
 
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()
@@ -328,12 +300,6 @@ def train(args, loader_dict,
     global best_acc
     test_accs = []
     end = time.time()
-
-    if args.world_size > 1:
-        labeled_epoch = 0
-        unlabeled_epoch = 0
-        # labeled_trainloader.sampler.set_epoch(labeled_epoch)
-        # unlabeled_trainloader.sampler.set_epoch(unlabeled_epoch)
 
     labeled_iter = iter(loader_dict['train_lb'])
     unlabeled_iter = iter(loader_dict['train_ulb'])
@@ -534,7 +500,7 @@ def train(args, loader_dict,
             test_model = model1
 
         if args.local_rank in [-1, 0]:
-            test_loader = loader_dict['eval']
+            test_loader = loader_dict['test']
             test_loss, test_acc = test(args, test_loader, test_model, epoch)
 
             args.writer.add_scalar('train/1.train_loss', losses.avg, epoch)

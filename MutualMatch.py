@@ -75,13 +75,7 @@ def main():
 
     # shoose model
     def create_model(args):
-        if args.dataset == 'stl10':
-            import models.wideresnet_var as models
-            model = models.build_wideresnetvar(depth=args.model_depth,
-                                               widen_factor=args.model_width,
-                                               dropout=0,
-                                               num_classes=args.num_classes)
-        elif args.dataset == 'imagenet':
+        if args.dataset == 'imagenet':
             import models.resnet50 as models
             model = models.build_ResNet50(depth=args.model_depth,
                                           widen_factor=args.model_width,

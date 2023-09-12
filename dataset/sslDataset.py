@@ -5,7 +5,6 @@ import numpy as np
 from torchvision import transforms
 import json
 import os
-import accimage
 import random
 from .randaugment import RandAugmentMC
 import gc
@@ -27,15 +26,14 @@ std['imagenet'] = [0.229, 0.224, 0.225]
 
 
 def accimage_loader(path):
+    import accimage
     try:
         return accimage.Image(path)
     except IOError:
-        # Potentially a decoding problem, fall back to PIL.Image
         return pil_loader(path)
 
 
 def pil_loader(path):
-    # open path as file to avoid ResourceWarning (https://github.com/python-pillow/Pillow/issues/835)
     with open(path, 'rb') as f:
         img = Image.open(f)
         return img.convert('RGB')
@@ -178,11 +176,6 @@ def get_transform(mean, std, crop_size, train=True):
 
 
 class SSL_Dataset:
-    """
-    SSL_Dataset class gets dataset from torchvision.datasets,
-    separates labeled and unlabeled data,
-    and return BasicDataset: torch.utils.data.Dataset (see datasets.dataset.py)
-    """
 
     def __init__(self,
                  args,
@@ -190,13 +183,6 @@ class SSL_Dataset:
                  train=True,
                  num_classes=10,
                  data_dir='./data'):
-        """
-        Args
-            name: name of dataset in torchvision.datasets (cifar10, cifar100, svhn, stl10)
-            train: True means the dataset is training dataset (default=True)
-            num_classes: number of label classes
-            data_dir: path of directory, where data is downloaed or stored.
-        """
         self.args = args
         self.name = name
         self.train = train
@@ -206,11 +192,6 @@ class SSL_Dataset:
         self.transform = get_transform(mean[name], std[name], crop_size, train)
 
     def get_data(self, svhn_extra=True):
-        """
-        get_data returns data (images) and targets (labels)
-        shape of data: B, H, W, C
-        shape of labels: B,
-        """
         dset = getattr(torchvision.datasets, self.name.upper())
         if 'CIFAR' in self.name.upper():
             dset = dset(self.data_dir, train=self.train, download=True)
@@ -244,15 +225,6 @@ class SSL_Dataset:
 
     def get_dset(self, is_ulb=False,
                  strong_transform=None, onehot=False):
-        """
-        get_dset returns class BasicDataset, containing the returns of get_data.
-        
-        Args
-            is_ulb: If True, returned dataset generates a pair of weak and strong augmented images.
-            strong_transform: list of strong_transform (augmentation) if use_strong_transform is True。
-            onehot: If True, the label is not integer, but one-hot vector.
-        """
-
         if self.name.upper() == 'STL10':
             data, targets, _ = self.get_data()
         else:
@@ -265,21 +237,6 @@ class SSL_Dataset:
 
     def get_ssl_dset(self, num_labels, index=None, include_lb_to_ulb=True,
                      strong_transform=None, onehot=False):
-        """
-        get_ssl_dset split training samples into labeled and unlabeled samples.
-        The labeled data is balanced samples over classes.
-        
-        Args:
-            num_labels: number of labeled data.
-            index: If index of np.array is given, labeled data is not randomly sampled, but use index for sampling.
-            include_lb_to_ulb: If True, consistency regularization is also computed for the labeled data.
-            strong_transform: list of strong transform (RandAugment in FixMatch)
-            onehot: If True, the target is converted into onehot vector.
-            
-        Returns:
-            BasicDataset (for labeled data), BasicDataset (for unlabeld data)
-        """
-
         if self.name.upper() == 'STL10':
             lb_data, lb_targets, ulb_data = self.get_data()
             if include_lb_to_ulb:
@@ -293,7 +250,6 @@ class SSL_Dataset:
                                                                         index, include_lb_to_ulb)
 
 
-        # output the distribution of labeled data for remixmatch
         count = [0 for _ in range(self.num_classes)]
         for c in lb_targets:
             count[c] += 1
@@ -313,6 +269,5 @@ class SSL_Dataset:
 
         ulb_dset = BasicDataset(ulb_data, ulb_targets, self.num_classes,
                                 self.transform, True, strong_transform, onehot)
-        # print(lb_data.shape)
-        # print(ulb_data.shape)
+
         return lb_dset, ulb_dset
