@@ -1,19 +1,15 @@
+import math
 import torch
-from torch.utils.data import sampler, DataLoader, DistributedSampler
-from torch.utils.data.sampler import BatchSampler, RandomSampler
-import torch.distributed as dist
+from torch.utils.data import sampler
 import numpy as np
-from .DistributedProxySampler import DistributedProxySampler
 
 
-def split_ssl_data(args, data, target, num_labels, num_classes, index=None, include_lb_to_ulb=True):
+def split_ssl_data(args, data, target, num_labels, num_classes, index=None):
     data, target = np.array(data), np.array(target)
     lb_data, lbs, lb_idx, = sample_labeled_data(args, data, target, num_labels, num_classes, index)
-    ulb_idx = np.array(sorted(list(set(range(len(data))) - set(lb_idx))))  # unlabeled_data index of data
-    if include_lb_to_ulb:
-        return lb_data, lbs, data, target
-    else:
-        return lb_data, lbs, data[ulb_idx], target[ulb_idx]
+    ulb_idx = np.array(range(len(target)))
+    # 扩增到64*7*1024后全部一起RandomSampler还是保持原大小散列后iterator重复读取，两种结果实验对比
+    return lb_data, lbs, data[ulb_idx], target[ulb_idx]
 
 
 def sample_labeled_data(args, data, target,
@@ -34,10 +30,18 @@ def sample_labeled_data(args, data, target,
         idx = np.random.choice(idx, samples_per_class, False)
         lb_idx.extend(idx)
 
-        lb_data.extend(data[idx])
-        lbs.extend(target[idx])
+    lb_idx = np.array(lb_idx)
+    if args.expand_labels or args.num_labels < args.batch_size:
+        num_expand_x = math.ceil(
+            args.batch_size * args.eval_step / args.num_labels)
+        lb_idx = np.hstack([lb_idx for _ in range(num_expand_x)])
+    # 实验对比分布式训练把数据扩增到*world_size好不好
+    np.random.shuffle(lb_idx)
 
-    return np.array(lb_data), np.array(lbs), np.array(lb_idx)
+    lb_data.extend(data[lb_idx])
+    lbs.extend(target[lb_idx])
+
+    return np.array(lb_data), np.array(lbs), lb_idx
 
 
 def get_sampler_by_name(name):
@@ -52,54 +56,6 @@ def get_sampler_by_name(name):
         print(repr(e))
         print('[!] select sampler in:\t', sampler_name_list)
 
-
-def get_data_loader(dset,
-                    batch_size=None,
-                    shuffle=False,
-                    num_workers=4,
-                    pin_memory=False,
-                    data_sampler=None,
-                    replacement=True,
-                    num_epochs=None,
-                    num_iters=None,
-                    generator=None,
-                    drop_last=True,
-                    distributed=False):
-
-    assert batch_size is not None
-
-    if data_sampler is None:
-        return DataLoader(dset, batch_size=batch_size, shuffle=shuffle,
-                          num_workers=num_workers, pin_memory=pin_memory)
-
-    else:
-        if isinstance(data_sampler, str):
-            data_sampler = get_sampler_by_name(data_sampler)
-
-        if distributed:
-            assert dist.is_available()
-            num_replicas = dist.get_world_size()
-        else:
-            num_replicas = 1
-
-        if (num_epochs is not None) and (num_iters is None):
-            num_samples = len(dset) * num_epochs
-        elif (num_epochs is None) and (num_iters is not None):
-            num_samples = batch_size * num_iters * num_replicas
-        else:
-            num_samples = len(dset)
-
-        if data_sampler.__name__ == 'RandomSampler':
-            data_sampler = data_sampler(dset, replacement, num_samples, generator)
-        else:
-            raise RuntimeError(f"{data_sampler.__name__} is not implemented.")
-
-        if distributed:
-            data_sampler = DistributedProxySampler(data_sampler)
-
-        batch_sampler = BatchSampler(data_sampler, batch_size, drop_last)
-        return DataLoader(dset, batch_sampler=batch_sampler,
-                          num_workers=num_workers, pin_memory=pin_memory)
 
 def get_onehot(num_classes, idx):
     onehot = np.zeros([num_classes], dtype=np.float32)

@@ -241,29 +241,14 @@ class SSL_Dataset:
             lb_data, lb_targets, ulb_data = self.get_data()
             if include_lb_to_ulb:
                 ulb_data = np.concatenate([ulb_data, lb_data], axis=0)
+                # STL10数据集数据量比较大，且未随机生成index，但是会RandomSampler，对比随机index的消融实验结果
             lb_data, lb_targets, _ = sample_labeled_data(self.args, lb_data, lb_targets, num_labels, self.num_classes)
             ulb_targets = None
         else:
             data, targets = self.get_data()
             lb_data, lb_targets, ulb_data, ulb_targets = split_ssl_data(self.args, data, targets,
                                                                         num_labels, self.num_classes,
-                                                                        index, include_lb_to_ulb)
-
-
-        count = [0 for _ in range(self.num_classes)]
-        for c in lb_targets:
-            count[c] += 1
-        dist = np.array(count, dtype=float)
-        dist = dist / dist.sum()
-        dist = dist.tolist()
-        out = {"distribution": dist}
-        output_file = r"./data_statistics/"
-        output_path = output_file + str(self.name) + '_' + str(num_labels) + '.json'
-        if not os.path.exists(output_file):
-            os.makedirs(output_file, exist_ok=True)
-        with open(output_path, 'w') as w:
-            json.dump(out, w)
-        # print(Counter(ulb_targets.tolist()))
+                                                                        index)
         lb_dset = BasicDataset(lb_data, lb_targets, self.num_classes,
                                self.transform, False, None, onehot)
 

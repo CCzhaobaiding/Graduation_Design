@@ -11,10 +11,10 @@ import torch.nn.functional as F
 from torch import nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR
+from torch.utils.data import RandomSampler, DistributedSampler, SequentialSampler, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import torch.distributed as dist
-from dataset.dataUtils import get_data_loader
 from dataset.sslDataset import SSL_Dataset, ImageNetLoader
 from utils import AverageMeter, accuracy
 
@@ -33,7 +33,6 @@ def main():
     parser.add_argument('--num-labels', type=int, default=4000)
     parser.add_argument("--expand-labels", action="store_true", help="expand labels to fit eval steps")
     parser.add_argument('--total-steps', default=2 ** 20, type=int)
-    parser.add_argument('--train-sampler', type=str, default='RandomSampler')
     parser.add_argument('--eval-step', default=1024, type=int)
     parser.add_argument('--start-epoch', default=0, type=int)
     parser.add_argument('--batch-size', default=64, type=int)
@@ -144,27 +143,27 @@ def main():
     if args.local_rank == 0:
         torch.distributed.barrier()
 
-    args.distributed = args.local_rank == 0
-    loader_dict = {}
-    dset_dict = {'train_lb': labeled_dataset, 'train_ulb': unlabeled_dataset, 'test': test_dataset}
-    loader_dict['train_lb'] = get_data_loader(dset_dict['train_lb'],
-                                              args.batch_size,
-                                              data_sampler=args.train_sampler,
-                                              num_iters=args.eval_step,
-                                              num_workers=args.num_workers,
-                                              distributed=args.distributed)
+    train_sampler = RandomSampler if args.local_rank == -1 else DistributedSampler
 
-    loader_dict['train_ulb'] = get_data_loader(dset_dict['train_ulb'],
-                                               args.batch_size * args.mu,
-                                               data_sampler=args.train_sampler,
-                                               num_iters=args.eval_step,
-                                               num_workers=4 * args.num_workers,
-                                               distributed=args.distributed)
+    labeled_trainloader = DataLoader(
+        labeled_dataset,
+        sampler=train_sampler(labeled_dataset),
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        drop_last=True)
 
-    loader_dict['test'] = get_data_loader(dset_dict['test'],
-                                          args.batch_size,
-                                          num_workers=1,
-                                          drop_last=False)
+    unlabeled_trainloader = DataLoader(
+        unlabeled_dataset,
+        sampler=train_sampler(unlabeled_dataset),
+        batch_size=args.batch_size * args.mu,
+        num_workers=args.num_workers,
+        drop_last=True)
+
+    test_loader = DataLoader(
+        test_dataset,
+        sampler=SequentialSampler(test_dataset),
+        batch_size=args.batch_size,
+        num_workers=args.num_workers)
 
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()
@@ -247,7 +246,7 @@ def main():
 
     model1.zero_grad()
     model2.zero_grad()
-    train(args, loader_dict,
+    train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
           model1, optimizer1, ema_model1, scheduler1, model2, optimizer2, ema_model2, scheduler2)
 
 
@@ -292,14 +291,20 @@ def de_interleave(x, size):
     return x.reshape([size, -1] + s[1:]).transpose(0, 1).reshape([-1] + s[1:])
 
 
-def train(args, loader_dict,
+def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
           model1, optimizer1, ema_model1, scheduler1, model2, optimizer2, ema_model2, scheduler2):
     global best_acc
     test_accs = []
     end = time.time()
 
-    labeled_iter = iter(loader_dict['train_lb'])
-    unlabeled_iter = iter(loader_dict['train_ulb'])
+    if args.world_size > 1:
+        labeled_epoch = 0
+        unlabeled_epoch = 0
+        labeled_trainloader.sampler.set_epoch(labeled_epoch)
+        unlabeled_trainloader.sampler.set_epoch(unlabeled_epoch)
+
+    labeled_iter = iter(labeled_trainloader)
+    unlabeled_iter = iter(unlabeled_trainloader)
 
     model1.train()
     model2.train()
@@ -328,12 +333,18 @@ def train(args, loader_dict,
             try:
                 _, inputs_x, targets_x = labeled_iter.next()
             except:
-                labeled_iter = iter(loader_dict['train_lb'])
+                if args.world_size > 1:
+                    labeled_epoch += 1
+                    labeled_trainloader.sampler.set_epoch(labeled_epoch)
+                labeled_iter = iter(labeled_trainloader)
                 _, inputs_x, targets_x = labeled_iter.next()
             try:
                 _, inputs_u_w, inputs_u_s1, inputs_u_s2 = unlabeled_iter.next()
             except:
-                unlabeled_iter = iter(loader_dict['train_ulb'])
+                if args.world_size > 1:
+                    unlabeled_epoch += 1
+                    unlabeled_trainloader.sampler.set_epoch(unlabeled_epoch)
+                unlabeled_iter = iter(unlabeled_trainloader)
                 _, inputs_u_w, inputs_u_s1, inputs_u_s2 = unlabeled_iter.next()
 
             data_time.update(time.time() - end)
@@ -497,7 +508,6 @@ def train(args, loader_dict,
             test_model = model1
 
         if args.local_rank in [-1, 0]:
-            test_loader = loader_dict['test']
             test_loss, test_acc = test(args, test_loader, test_model, epoch)
 
             args.writer.add_scalar('train/1.train_loss', losses.avg, epoch)
