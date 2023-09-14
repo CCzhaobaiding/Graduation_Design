@@ -30,7 +30,7 @@ class BasicDataset(Dataset):
         if self.is_ulb:
             if strong_transform is None:
                 self.strong_transform = copy.deepcopy(transform)
-                self.strong_transform.transforms.insert(0, RandAugmentMC(2, 10))
+                self.strong_transform.transforms.insert(2, RandAugmentMC(2, 10))
         else:
             self.strong_transform = strong_transform
 

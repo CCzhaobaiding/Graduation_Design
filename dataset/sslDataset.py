@@ -72,7 +72,7 @@ class ImagenetDataset(torchvision.datasets.ImageFolder):
 
         if self.ulb:
             self.strong_transform = copy.deepcopy(transform)
-            self.strong_transform.transforms.insert(0, RandAugmentMC(2, 10))
+            self.strong_transform.transforms.insert(2, RandAugmentMC(2, 10))
 
     def __getitem__(self, index):
         path, target = self.samples[index]
@@ -166,10 +166,10 @@ class ImageNetLoader:
 
 def get_transform(mean, std, crop_size, train=True):
     if train:
-        return transforms.Compose([transforms.RandomHorizontalFlip(),
-                                   transforms.RandomCrop(crop_size, padding=4, padding_mode='reflect'),
-                                   transforms.ToTensor(),
-                                   transforms.Normalize(mean, std)])
+            return transforms.Compose([transforms.RandomHorizontalFlip(),
+                                       transforms.RandomCrop(crop_size, padding=4, padding_mode='reflect'),
+                                       transforms.ToTensor(),
+                                       transforms.Normalize(mean, std)])
     else:
         return transforms.Compose([transforms.ToTensor(),
                                    transforms.Normalize(mean, std)])
