@@ -18,7 +18,7 @@ import torch.distributed as dist
 from dataset.sslDataset import SSL_Dataset, ImageNetLoader
 from utils import AverageMeter, accuracy
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 logger = logging.getLogger(__name__)
 best_acc = 0
 
@@ -36,7 +36,7 @@ def main():
     parser.add_argument('--eval-step', default=1024, type=int)
     parser.add_argument('--start-epoch', default=0, type=int)
     parser.add_argument('--batch-size', default=64, type=int)
-    parser.add_argument('--lr', '--learning-rate', default=0.03, type=float)
+    parser.add_argument('--lr', '--learning-rate', default=0.05, type=float)
     parser.add_argument('--warmup', default=0, type=float)
     parser.add_argument('--wdecay', default=5e-4, type=float, help='weight decay')
     parser.add_argument('--nesterov', action='store_true', default=True, help='use nesterov momentum')
@@ -479,25 +479,25 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             mask_probs1.update(mask1.mean().item())
             mask_probs2.update(mask1.mean().item())
 
-            # if not args.no_progress:
-            #     p_bar.set_description("Train Epoch: {epoch}/{epochs:4}. Iter: {batch:4}/{iter:4}. LR1: {lr1:.4f}. LR2: {lr2:.4f}. Data: {data:.3f}s. Batch: {bt:.3f}s. Loss: {loss:.4f}. Loss_labeled: {loss_labeled:.4f}. Loss_unlabeled: {loss_unlabeled:.4f}. Loss_cross_dif: {loss_cross_dif:.4f}. Loss_cross_con: {loss_cross_con:.4f}. Loss_graph_com: {loss_graph_com:.4f}. Mask1: {mask1:.2f}. Mask2: {mask2:.2f}.".format(
-            #         epoch=epoch + 1,
-            #         epochs=args.epochs,
-            #         batch=batch_idx + 1,
-            #         iter=args.eval_step,
-            #         lr1=scheduler1.get_last_lr()[0],
-            #         lr2=scheduler2.get_last_lr()[0],
-            #         data=data_time.avg,
-            #         bt=batch_time.avg,
-            #         loss=losses.avg,
-            #         loss_labeled=losses_labeled.avg,
-            #         loss_unlabeled=losses_unlabeled.avg,
-            #         loss_cross_dif=losses_cross_dif.avg,
-            #         loss_cross_con=losses_cross_con.avg,
-            #         loss_graph_com=losses_graph_com.avg,
-            #         mask1=mask_probs1.avg,
-            #         mask2=mask_probs2.avg))
-            #     p_bar.update()
+            if not args.no_progress:
+                p_bar.set_description("Train Epoch: {epoch}/{epochs:4}. Iter: {batch:4}/{iter:4}. LR1: {lr1:.4f}. LR2: {lr2:.4f}. Data: {data:.3f}s. Batch: {bt:.3f}s. Loss: {loss:.4f}. Loss_labeled: {loss_labeled:.4f}. Loss_unlabeled: {loss_unlabeled:.4f}. Loss_cross_dif: {loss_cross_dif:.4f}. Loss_cross_con: {loss_cross_con:.4f}. Loss_graph_com: {loss_graph_com:.4f}. Mask1: {mask1:.2f}. Mask2: {mask2:.2f}.".format(
+                    epoch=epoch + 1,
+                    epochs=args.epochs,
+                    batch=batch_idx + 1,
+                    iter=args.eval_step,
+                    lr1=scheduler1.get_last_lr()[0],
+                    lr2=scheduler2.get_last_lr()[0],
+                    data=data_time.avg,
+                    bt=batch_time.avg,
+                    loss=losses.avg,
+                    loss_labeled=losses_labeled.avg,
+                    loss_unlabeled=losses_unlabeled.avg,
+                    loss_cross_dif=losses_cross_dif.avg,
+                    loss_cross_con=losses_cross_con.avg,
+                    loss_graph_com=losses_graph_com.avg,
+                    mask1=mask_probs1.avg,
+                    mask2=mask_probs2.avg))
+                p_bar.update()
 
         if not args.no_progress:
             p_bar.close()
@@ -582,18 +582,18 @@ def test(args, test_loader, model, epoch):
             top5.update(prec5.item(), inputs.shape[0])
             batch_time.update(time.time() - end)
             end = time.time()
-        #     if not args.no_progress:
-        #         test_loader.set_description("Test Iter: {batch:4}/{iter:4}. Data: {data:.3f}s. Batch: {bt:.3f}s. Loss: {loss:.4f}. top1: {top1:.2f}. top5: {top5:.2f}. ".format(
-        #             batch=batch_idx + 1,
-        #             iter=len(test_loader),
-        #             data=data_time.avg,
-        #             bt=batch_time.avg,
-        #             loss=losses.avg,
-        #             top1=top1.avg,
-        #             top5=top5.avg,
-        #         ))
-        # if not args.no_progress:
-        #     test_loader.close()
+            if not args.no_progress:
+                test_loader.set_description("Test Iter: {batch:4}/{iter:4}. Data: {data:.3f}s. Batch: {bt:.3f}s. Loss: {loss:.4f}. top1: {top1:.2f}. top5: {top5:.2f}. ".format(
+                    batch=batch_idx + 1,
+                    iter=len(test_loader),
+                    data=data_time.avg,
+                    bt=batch_time.avg,
+                    loss=losses.avg,
+                    top1=top1.avg,
+                    top5=top5.avg,
+                ))
+        if not args.no_progress:
+            test_loader.close()
 
     logger.info("top-1 acc: {:.2f}".format(top1.avg))
     logger.info("top-5 acc: {:.2f}".format(top5.avg))
