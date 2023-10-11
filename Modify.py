@@ -18,7 +18,7 @@ import torch.distributed as dist
 from dataset.sslDataset import SSL_Dataset, ImageNetLoader
 from utils import AverageMeter, accuracy
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
 logger = logging.getLogger(__name__)
 best_acc = 0
 
@@ -81,7 +81,10 @@ def main():
             model = models.build_ResNet50(num_classes=args.num_classes)
         elif args.dataset == 'stl10':
             import models.wideresnet_var as models
-            model = models.build_WideResNetVar(num_classes=args.num_classes)
+            model = models.build_WideResNetVar(depth=args.model_depth,
+                                               widen_factor=args.model_width,
+                                               dropout=0,
+                                               num_classes=args.num_classes)
         else:
             import models.wideresnet as models
             model = models.build_wideresnet(depth=args.model_depth,

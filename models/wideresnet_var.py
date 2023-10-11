@@ -1,8 +1,10 @@
-import math
+import logging
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+logger = logging.getLogger(__name__)
 momentum = 0.001
 
 
@@ -81,7 +83,7 @@ class Normalize(nn.Module):
 
 
 class WideResNetVar(nn.Module):
-    def __init__(self, first_stride, num_classes, depth=28, widen_factor=2, drop_rate=0.0, is_remix=False):
+    def __init__(self, num_classes, depth=28, widen_factor=2, drop_rate=0.0):
         super(WideResNetVar, self).__init__()
         channels = [16, 16 * widen_factor, 32 * widen_factor, 64 * widen_factor, 128 * widen_factor]
         assert ((depth - 4) % 6 == 0)
@@ -92,7 +94,7 @@ class WideResNetVar(nn.Module):
                                padding=1, bias=True)
         # 1st block
         self.block1 = NetworkBlock(
-            n, channels[0], channels[1], block, first_stride, drop_rate, activate_before_residual=True)
+            n, channels[0], channels[1], block, 1, drop_rate, activate_before_residual=True)
         # 2nd block
         self.block2 = NetworkBlock(
             n, channels[1], channels[2], block, 2, drop_rate)
@@ -123,7 +125,7 @@ class WideResNetVar(nn.Module):
                 nn.init.xavier_normal_(m.weight.data)
                 m.bias.data.zero_()
 
-    def forward(self, x, ood_test=False):
+    def forward(self, x):
         out = self.conv1(x)
         out = self.block1(out)
         out = self.block2(out)
@@ -142,30 +144,9 @@ class WideResNetVar(nn.Module):
         return output, feat
 
 
-class build_WideResNetVar:
-    def __init__(self, first_stride=1, depth=28, widen_factor=2, bn_momentum=0.01, leaky_slope=0.0, dropRate=0.0,
-                 use_embed=False, is_remix=False):
-        self.first_stride = first_stride
-        self.depth = depth
-        self.widen_factor = widen_factor
-        self.bn_momentum = bn_momentum
-        self.dropRate = dropRate
-        self.leaky_slope = leaky_slope
-        self.use_embed = use_embed
-        self.is_remix = is_remix
-
-    def build(self, num_classes):
-        return WideResNetVar(
-            first_stride=self.first_stride,
-            depth=self.depth,
-            num_classes=num_classes,
-            widen_factor=self.widen_factor,
-            drop_rate=self.dropRate,
-            is_remix=self.is_remix,
-        )
-
-
-if __name__ == '__main__':
-    wrn_builder = build_WideResNetVar(1, 10, 2, 0.01, 0.1, 0.5)
-    wrn = wrn_builder.build(10)
-    print(wrn)
+def build_WideResNetVar(depth, widen_factor, dropout, num_classes):
+    logger.info(f"Model: WideResNet {depth}x{widen_factor}")
+    return WideResNetVar(depth=depth,
+                         widen_factor=widen_factor,
+                         drop_rate=dropout,
+                         num_classes=num_classes)
