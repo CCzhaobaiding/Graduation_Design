@@ -79,9 +79,6 @@ def main():
         if args.dataset == 'imagenet':
             import models.resnet50 as models
             model = models.build_ResNet50(num_classes=args.num_classes)
-        elif args.dataset == 'stl10':
-            import models.wideresnet_var as models
-            model = models.build_WideResNetVar(num_classes=args.num_classes)
         else:
             import models.wideresnet as models
             model = models.build_wideresnet(depth=args.model_depth,
@@ -392,7 +389,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             pseudo_label2 = pseudo_label2 / pseudo_label_avg2
             pseudo_label2 = pseudo_label2 / pseudo_label2.sum(dim=1, keepdim=True)
 
-            # sharpen
+            ###
             pseudo_label1 = pseudo_label1 ** (1 / args.ST)
             pseudo_label1 = pseudo_label1 / pseudo_label1.sum(dim=1, keepdim=True)
             pseudo_label2 = pseudo_label2 ** (2 / args.ST)
@@ -455,8 +452,9 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             loss_graph_com = - (torch.log(sim_probs + 1e-7) * Q).sum(1)
             loss_graph_com = loss_graph_com.mean()
             loss_graph_com = args.lambda_com * loss_graph_com
+            # 不加 loss_graph_com
 
-            loss = loss_labeled + loss_unlabeled + loss_cross_dif + loss_cross_con + loss_graph_com
+            loss = loss_labeled + loss_unlabeled + loss_cross_dif + loss_cross_con
 
             loss.backward()
             losses.update(loss.item())
