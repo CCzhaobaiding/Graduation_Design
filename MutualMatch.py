@@ -5,33 +5,34 @@ import os
 import random
 import shutil
 import time
-
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR
-from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
-from torch.utils.data.distributed import DistributedSampler
+from torch.utils.data import RandomSampler, DistributedSampler, SequentialSampler, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from dataset.dataset import DATASET_GETTERS
+import torch.distributed as dist
+from dataset.sslDataset import SSL_Dataset, ImageNetLoader
 from utils import AverageMeter, accuracy
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 logger = logging.getLogger(__name__)
 best_acc = 0
+
 
 def main():
     parser = argparse.ArgumentParser(description='PyTorch CrossMatch Training')
     parser.add_argument('--gpu-id', default='0', type=int, help='id(s) for CUDA_VISIBLE_DEVICES')
     parser.add_argument('--num-workers', type=int, default=4, help='number of workers')
-    parser.add_argument('--dataset', default='cifar10', type=str,
-                        choices=['cifar10', 'cifar100', 'stl10', 'svhn'], help='dataset name')
+    parser.add_argument('--data_dir', type=str, default='./data')
+    parser.add_argument('--dataset', default='cifar10', type=str, choices=['cifar10', 'cifar100', 'stl10', 'svhn'],
+                        help='dataset name')
     parser.add_argument('--num-labels', type=int, default=4000)
     parser.add_argument("--expand-labels", action="store_true", help="expand labels to fit eval steps")
-    parser.add_argument('--arch', default='wideresnet', type=str)
-    parser.add_argument('--total-steps', default=2**20, type=int)
+    parser.add_argument('--total-steps', default=2 ** 20, type=int)
     parser.add_argument('--eval-step', default=1024, type=int)
     parser.add_argument('--start-epoch', default=0, type=int)
     parser.add_argument('--batch-size', default=64, type=int)
@@ -60,17 +61,39 @@ def main():
     parser.add_argument('--no-progress', action='store_true', help="don't use progress bar")
     args = parser.parse_args()
 
+    if args.dataset == 'imagenet':
+        args.num_classes = 1000
+        args.model_depth = 0
+        args.model_width = 0
+    elif args.dataset == 'cifar100':
+        args.num_classes = 100
+        args.model_depth = 28
+        args.model_width = 8
+    else:
+        args.num_classes = 10
+        args.model_depth = 28
+        args.model_width = 2
+
+    # shoose model
     def create_model(args):
-        if args.dataset != 'imagenet':
-            import models.wideresnet_emb as models
+        if args.dataset == 'imagenet':
+            import models.resnet50 as models
+            model = models.build_ResNet50(num_classes=args.num_classes)
+        elif args.dataset == 'stl10':
+            import models.wideresnet_var as models
+            model = models.build_WideResNetVar(depth=args.model_depth,
+                                               widen_factor=args.model_width,
+                                               dropout=0,
+                                               num_classes=args.num_classes)
+        else:
+            import models.wideresnet as models
             model = models.build_wideresnet(depth=args.model_depth,
                                             widen_factor=args.model_width,
                                             dropout=0,
                                             num_classes=args.num_classes)
-        else:
-            logger.info("model of imagenet")
+
         logger.info("Total params: {:.2f}M".format(
-            sum(p.numel() for p in model.parameters())/1e6))
+            sum(p.numel() for p in model.parameters()) / 1e6))
         return model
 
     if args.local_rank == -1:
@@ -106,28 +129,22 @@ def main():
         os.makedirs(args.out, exist_ok=True)
         args.writer = SummaryWriter(args.out)
 
-    if args.dataset == 'cifar10':
-        args.num_classes = 10
-        args.model_depth = 28
-        args.model_width = 2
-    elif args.dataset == 'cifar100':
-        args.num_classes = 100
-        args.model_depth = 28
-        args.model_width = 8
-    elif args.dataset == 'stl10':
-        args.num_classes = 10
-        args.model_depth = 28
-        args.model_width = 2
-    elif args.dataset == 'svhn':
-        args.num_classes = 10
-        args.model_depth = 28
-        args.model_width = 2
-
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()
 
-    labeled_dataset, unlabeled_dataset, test_dataset = DATASET_GETTERS[args.dataset](
-        args, './data')
+    if args.dataset != "imagenet":
+        train_dset = SSL_Dataset(args, name=args.dataset, train=True,
+                                 num_classes=args.num_classes, data_dir=args.data_dir)
+        labeled_dataset, unlabeled_dataset = train_dset.get_ssl_dset(args.num_labels)
+        _test_dset = SSL_Dataset(args, name=args.dataset, train=False,
+                                 num_classes=args.num_classes, data_dir=args.data_dir)
+        test_dataset = _test_dset.get_dset()
+    else:
+        image_loader = ImageNetLoader(root_path=args.data_dir, num_labels=args.num_labels,
+                                      num_class=args.num_classes)
+        labeled_dataset = image_loader.get_lb_train_data()
+        unlabeled_dataset = image_loader.get_ulb_train_data()
+        test_dataset = image_loader.get_lb_test_data()
 
     if args.local_rank == 0:
         torch.distributed.barrier()
@@ -144,7 +161,7 @@ def main():
     unlabeled_trainloader = DataLoader(
         unlabeled_dataset,
         sampler=train_sampler(unlabeled_dataset),
-        batch_size=args.batch_size*args.mu,
+        batch_size=args.batch_size * args.mu,
         num_workers=args.num_workers,
         drop_last=True)
 
@@ -174,7 +191,7 @@ def main():
             nd in n for nd in no_decay)], 'weight_decay': 0.0}
     ]
     optimizer1 = optim.SGD(grouped_parameters1, lr=args.lr,
-                          momentum=0.9, nesterov=args.nesterov)
+                           momentum=0.9, nesterov=args.nesterov)
 
     args.epochs = math.ceil(args.total_steps / args.eval_step)
     scheduler1 = get_cosine_schedule_with_warmup(
@@ -187,9 +204,8 @@ def main():
             nd in n for nd in no_decay)], 'weight_decay': 0.0}
     ]
     optimizer2 = optim.SGD(grouped_parameters2, lr=args.lr,
-                          momentum=0.9, nesterov=args.nesterov)
+                           momentum=0.9, nesterov=args.nesterov)
 
-    args.epochs = math.ceil(args.total_steps / args.eval_step)
     scheduler2 = get_cosine_schedule_with_warmup(
         optimizer2, args.warmup, args.total_steps)
 
@@ -218,7 +234,6 @@ def main():
         scheduler1.load_state_dict(checkpoint['scheduler1'])
         scheduler2.load_state_dict(checkpoint['scheduler2'])
 
-
     if args.local_rank != -1:
         model1 = torch.nn.parallel.DistributedDataParallel(
             model1, device_ids=[args.local_rank],
@@ -232,7 +247,7 @@ def main():
     logger.info(f"  Num Epochs = {args.epochs}")
     logger.info(f"  Batch size per GPU = {args.batch_size}")
     logger.info(
-        f"  Total train batch size = {args.batch_size*args.world_size}")
+        f"  Total train batch size = {args.batch_size * args.world_size}")
     logger.info(f"  Total optimization steps = {args.total_steps}")
 
     model1.zero_grad()
@@ -260,13 +275,13 @@ def set_seed(args):
 def get_cosine_schedule_with_warmup(optimizer,
                                     num_warmup_steps,
                                     num_training_steps,
-                                    num_cycles=7./16.,
+                                    num_cycles=7. / 16.,
                                     last_epoch=-1):
     def _lr_lambda(current_step):
         if current_step < num_warmup_steps:
             return float(current_step) / float(max(1, num_warmup_steps))
         no_progress = float(current_step - num_warmup_steps) / \
-            float(max(1, num_training_steps - num_warmup_steps))
+                      float(max(1, num_training_steps - num_warmup_steps))
         return max(0., math.cos(math.pi * num_cycles * no_progress))
 
     return LambdaLR(optimizer, _lr_lambda, last_epoch)
@@ -284,7 +299,6 @@ def de_interleave(x, size):
 
 def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
           model1, optimizer1, ema_model1, scheduler1, model2, optimizer2, ema_model2, scheduler2):
-
     global best_acc
     test_accs = []
     end = time.time()
@@ -323,42 +337,42 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
 
         for batch_idx in range(args.eval_step):
             try:
-                inputs_x, targets_x = labeled_iter.next()
+                _, inputs_x, targets_x = labeled_iter.next()
             except:
                 if args.world_size > 1:
                     labeled_epoch += 1
                     labeled_trainloader.sampler.set_epoch(labeled_epoch)
                 labeled_iter = iter(labeled_trainloader)
-                inputs_x, targets_x = labeled_iter.next()
+                _, inputs_x, targets_x = labeled_iter.next()
             try:
-                (inputs_u_w, inputs_u_s1, inputs_u_s2), _ = unlabeled_iter.next()
+                _, inputs_u_w, inputs_u_s1, inputs_u_s2 = unlabeled_iter.next()
             except:
                 if args.world_size > 1:
                     unlabeled_epoch += 1
                     unlabeled_trainloader.sampler.set_epoch(unlabeled_epoch)
                 unlabeled_iter = iter(unlabeled_trainloader)
-                (inputs_u_w, inputs_u_s1, inputs_u_s2), _ = unlabeled_iter.next()
+                _, inputs_u_w, inputs_u_s1, inputs_u_s2 = unlabeled_iter.next()
 
             data_time.update(time.time() - end)
             batch_size = inputs_x.shape[0]
             inputs1 = interleave(
-                torch.cat((inputs_x, inputs_u_w, inputs_u_s1)), 2*args.mu+1).to(args.device)
+                torch.cat((inputs_x, inputs_u_w, inputs_u_s1)), 2 * args.mu + 1).to(args.device)
             inputs2 = interleave(
-                torch.cat((inputs_x, inputs_u_w, inputs_u_s2)), 2*args.mu+1).to(args.device)
+                torch.cat((inputs_x, inputs_u_w, inputs_u_s2)), 2 * args.mu + 1).to(args.device)
             targets_x = targets_x.to(args.device)
             logits1, features1 = model1(inputs1)
-            logits1 = de_interleave(logits1, 2*args.mu+1)
+            logits1 = de_interleave(logits1, 2 * args.mu + 1)
             logits_x1 = logits1[:batch_size]
             logits_u_w1, logits_u_s1 = logits1[batch_size:].chunk(2)
             del logits1
             logits2, features2 = model2(inputs2)
-            logits2 = de_interleave(logits2, 2*args.mu+1)
+            logits2 = de_interleave(logits2, 2 * args.mu + 1)
             logits_x2 = logits2[:batch_size]
             logits_u_w2, logits_u_s2 = logits2[batch_size:].chunk(2)
             del logits2
 
-            pseudo_label1 = torch.softmax(logits_u_w1.detach()/args.T, dim=-1)
-            pseudo_label2 = torch.softmax(logits_u_w2.detach()/args.T, dim=-1)
+            pseudo_label1 = torch.softmax(logits_u_w1.detach() / args.T, dim=-1)
+            pseudo_label2 = torch.softmax(logits_u_w2.detach() / args.T, dim=-1)
 
             # 嵌入的切分
             features1 = de_interleave(features1, 2 * args.mu + 1)
@@ -381,7 +395,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             pseudo_label2 = pseudo_label2 / pseudo_label_avg2
             pseudo_label2 = pseudo_label2 / pseudo_label2.sum(dim=1, keepdim=True)
 
-            ###
+            # sharpen
             pseudo_label1 = pseudo_label1 ** (1 / args.ST)
             pseudo_label1 = pseudo_label1 / pseudo_label1.sum(dim=1, keepdim=True)
             pseudo_label2 = pseudo_label2 ** (2 / args.ST)
@@ -407,7 +421,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             # discrepancy loss
             cos_dis = nn.CosineSimilarity(dim=1, eps=1e-6)
 
-            # cross supervised difference loss 差异性损失
+            # cross supervised difference loss
             loss_cross_labeled1 = 1 + cos_dis(logits_x1.detach(), logits_x2).mean()
             loss_cross_labeled2 = 1 + cos_dis(logits_x2.detach(), logits_x1).mean()
             loss_cross_labeled = (loss_cross_labeled1 + loss_cross_labeled2) / 2
@@ -491,8 +505,8 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             #         mask2=mask_probs2.avg))
             #     p_bar.update()
 
-        # if not args.no_progress:
-        #     p_bar.close()
+        if not args.no_progress:
+            p_bar.close()
 
         if args.use_ema:
             test_model = ema_model1.ema
@@ -559,7 +573,7 @@ def test(args, test_loader, model, epoch):
                            disable=args.local_rank not in [-1, 0])
 
     with torch.no_grad():
-        for batch_idx, (inputs, targets) in enumerate(test_loader):
+        for (batch_idx, inputs, targets) in test_loader:
             data_time.update(time.time() - end)
             model.eval()
 
@@ -584,8 +598,8 @@ def test(args, test_loader, model, epoch):
         #             top1=top1.avg,
         #             top5=top5.avg,
         #         ))
-        # if not args.no_progress:
-        #     test_loader.close()
+        if not args.no_progress:
+            test_loader.close()
 
     logger.info("top-1 acc: {:.2f}".format(top1.avg))
     logger.info("top-5 acc: {:.2f}".format(top5.avg))
