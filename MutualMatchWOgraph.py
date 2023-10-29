@@ -17,8 +17,8 @@ from tqdm import tqdm
 import torch.distributed as dist
 from dataset.sslDataset import SSL_Dataset, ImageNetLoader
 from utils import AverageMeter, accuracy
-os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
 
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 logger = logging.getLogger(__name__)
 best_acc = 0
 
@@ -44,7 +44,7 @@ def main():
     parser.add_argument('--ema-decay', default=0.999, type=float, help='EMA decay rate')
     parser.add_argument('--mu', default=7, type=int, help='coefficient of unlabeled batch size')
     parser.add_argument('--lambda-u', default=1, type=float)
-    parser.add_argument('--lambda-dis', default=1, type=float)
+    parser.add_argument('--lambda-dif', default=1, type=float)
     parser.add_argument('--lambda-con', default=1, type=float)
     parser.add_argument('--lambda-com', default=1, type=float)
     parser.add_argument('--T', default=1, type=float, help='pseudo label temperature')
@@ -74,17 +74,11 @@ def main():
         args.model_depth = 28
         args.model_width = 2
 
-    # choose model
+    # shoose model
     def create_model(args):
         if args.dataset == 'imagenet':
             import models.resnet50 as models
             model = models.build_ResNet50(num_classes=args.num_classes)
-        elif args.dataset == 'stl10':
-            import models.wideresnet_var as models
-            model = models.build_WideResNetVar(depth=args.model_depth,
-                                               widen_factor=args.model_width,
-                                               dropout=0,
-                                               num_classes=args.num_classes)
         else:
             import models.wideresnet as models
             model = models.build_wideresnet(depth=args.model_depth,
@@ -395,7 +389,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             pseudo_label2 = pseudo_label2 / pseudo_label_avg2
             pseudo_label2 = pseudo_label2 / pseudo_label2.sum(dim=1, keepdim=True)
 
-            # sharpen
+            ###
             pseudo_label1 = pseudo_label1 ** (1 / args.ST)
             pseudo_label1 = pseudo_label1 / pseudo_label1.sum(dim=1, keepdim=True)
             pseudo_label2 = pseudo_label2 ** (2 / args.ST)
@@ -426,7 +420,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             loss_cross_labeled2 = 1 + cos_dis(logits_x2.detach(), logits_x1).mean()
             loss_cross_labeled = (loss_cross_labeled1 + loss_cross_labeled2) / 2
 
-            # cross unsupervised difference loss
+            # cross unsupervised difference loss 模型预测的差异损失
             loss_cross_weak_unlabeled1 = 1 + cos_dis(logits_u_w1.detach(), logits_u_w2).mean()
             loss_cross_weak_unlabeled2 = 1 + cos_dis(logits_u_w2.detach(), logits_u_w1).mean()
             loss_cross_weak_unlabeled = (loss_cross_weak_unlabeled1 + loss_cross_weak_unlabeled2) / 2
@@ -435,11 +429,11 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             loss_cross_strong_unlabeled = (loss_cross_strong_unlabeled1 + loss_cross_strong_unlabeled2) / 2
             loss_cross_unlabeled = (loss_cross_weak_unlabeled + loss_cross_strong_unlabeled) / 2
 
-            # cross supervised difference loss
+            # cross difference loss
             loss_cross_dis = (loss_cross_labeled + loss_cross_unlabeled) / 2
-            loss_cross_dis = args.lambda_dis * loss_cross_dis
+            loss_cross_dis = args.lambda_dif * loss_cross_dis
 
-            # cross enforce consistence loss
+            # cross enforce consistence loss 交叉伪标签一致性损失
             loss_cross_con1 = (torch.sum(-F.log_softmax(logits_u_s1, dim=1) * pseudo_label2, dim=1) * mask1).mean()
             loss_cross_con2 = (torch.sum(-F.log_softmax(logits_u_s2, dim=1) * pseudo_label1, dim=1) * mask2).mean()
             loss_cross_con = (loss_cross_con1 + loss_cross_con2) / 2
@@ -458,8 +452,9 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             loss_graph_com = - (torch.log(sim_probs + 1e-7) * Q).sum(1)
             loss_graph_com = loss_graph_com.mean()
             loss_graph_com = args.lambda_com * loss_graph_com
+            # 不加 loss_graph_com
 
-            loss = loss_labeled + loss_unlabeled + loss_cross_dis + loss_cross_con + loss_graph_com
+            loss = loss_labeled + loss_unlabeled + loss_cross_dis + loss_cross_con
 
             loss.backward()
             losses.update(loss.item())

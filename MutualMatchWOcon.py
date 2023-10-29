@@ -17,8 +17,8 @@ from tqdm import tqdm
 import torch.distributed as dist
 from dataset.sslDataset import SSL_Dataset, ImageNetLoader
 from utils import AverageMeter, accuracy
-os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
 
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 logger = logging.getLogger(__name__)
 best_acc = 0
 
@@ -323,7 +323,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
         losses_labeled = AverageMeter()
         losses_unlabeled = AverageMeter()
         losses_cross_dis = AverageMeter()
-        losses_cross_con = AverageMeter()
+        # losses_cross_con = AverageMeter()
         losses_graph_com = AverageMeter()
         mask_probs1 = AverageMeter()
         mask_probs2 = AverageMeter()
@@ -459,14 +459,14 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             loss_graph_com = loss_graph_com.mean()
             loss_graph_com = args.lambda_com * loss_graph_com
 
-            loss = loss_labeled + loss_unlabeled + loss_cross_dis + loss_cross_con + loss_graph_com
+            loss = loss_labeled + loss_unlabeled + loss_cross_dis + loss_graph_com
 
             loss.backward()
             losses.update(loss.item())
             losses_labeled.update(loss_labeled.item())
             losses_unlabeled.update(loss_unlabeled.item())
             losses_cross_dis.update(loss_cross_dis.item())
-            losses_cross_con.update(loss_cross_con.item())
+            # losses_cross_con.update(loss_cross_con.item())
             losses_graph_com.update(loss_graph_com.item())
 
             optimizer1.step()
@@ -520,7 +520,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             args.writer.add_scalar('train/2.train_loss_labeled', losses_labeled.avg, epoch)
             args.writer.add_scalar('train/3.train_loss_unlabeled', losses_unlabeled.avg, epoch)
             args.writer.add_scalar('train/4.train_loss_cross_dis', losses_cross_dis.avg, epoch)
-            args.writer.add_scalar('train/5.train_loss_cross_con', losses_cross_con.avg, epoch)
+            # args.writer.add_scalar('train/5.train_loss_cross_con', losses_cross_con.avg, epoch)
             args.writer.add_scalar('train/6.train_loss_graph_com', losses_graph_com.avg, epoch)
             args.writer.add_scalar('train/7.mask1', mask_probs1.avg, epoch)
             args.writer.add_scalar('train/8.mask2', mask_probs2.avg, epoch)

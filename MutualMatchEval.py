@@ -8,6 +8,7 @@ import time
 import numpy as np
 import torch
 import torch.nn.functional as F
+from sklearn.metrics import *
 from torch import nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR
@@ -17,7 +18,7 @@ from tqdm import tqdm
 import torch.distributed as dist
 from dataset.sslDataset import SSL_Dataset, ImageNetLoader
 from utils import AverageMeter, accuracy
-os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
 logger = logging.getLogger(__name__)
 best_acc = 0
@@ -573,6 +574,8 @@ def test(args, test_loader, model, epoch):
                            disable=args.local_rank not in [-1, 0])
 
     with torch.no_grad():
+        y_true = []
+        y_pred = []
         for (batch_idx, inputs, targets) in test_loader:
             data_time.update(time.time() - end)
             model.eval()
@@ -581,6 +584,9 @@ def test(args, test_loader, model, epoch):
             targets = targets.to(args.device)
             outputs, _ = model(inputs)
             loss = F.cross_entropy(outputs, targets)
+
+            y_true.extend(targets.cpu().tolist())
+            y_pred.extend(torch.max(outputs, dim=-1)[1].cpu().tolist())
 
             prec1, prec5 = accuracy(outputs, targets, topk=(1, 5))
             losses.update(loss.item(), inputs.shape[0])
@@ -598,9 +604,16 @@ def test(args, test_loader, model, epoch):
         #             top1=top1.avg,
         #             top5=top5.avg,
         #         ))
+        precision = precision_score(y_true, y_pred, average='macro')
+        recall = recall_score(y_true, y_pred, average='macro')
+        F1 = f1_score(y_true, y_pred, average='macro')
+
         if not args.no_progress:
             test_loader.close()
 
+    logger.info("eval/precision: {:.4f}".format(precision))
+    logger.info("eval/recall: {:.4f}".format(recall))
+    logger.info("eval/F1: {:.4f}".format(F1))
     logger.info("top-1 acc: {:.2f}".format(top1.avg))
     logger.info("top-5 acc: {:.2f}".format(top5.avg))
     return losses.avg, top1.avg

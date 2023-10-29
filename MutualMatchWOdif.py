@@ -18,7 +18,7 @@ import torch.distributed as dist
 from dataset.sslDataset import SSL_Dataset, ImageNetLoader
 from utils import AverageMeter, accuracy
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 logger = logging.getLogger(__name__)
 best_acc = 0
 
@@ -44,7 +44,7 @@ def main():
     parser.add_argument('--ema-decay', default=0.999, type=float, help='EMA decay rate')
     parser.add_argument('--mu', default=7, type=int, help='coefficient of unlabeled batch size')
     parser.add_argument('--lambda-u', default=1, type=float)
-    parser.add_argument('--lambda-dif', default=1, type=float)
+    parser.add_argument('--lambda-dis', default=1, type=float)
     parser.add_argument('--lambda-con', default=1, type=float)
     parser.add_argument('--lambda-com', default=1, type=float)
     parser.add_argument('--T', default=1, type=float, help='pseudo label temperature')
@@ -74,11 +74,17 @@ def main():
         args.model_depth = 28
         args.model_width = 2
 
-    # shoose model
+    # choose model
     def create_model(args):
         if args.dataset == 'imagenet':
             import models.resnet50 as models
             model = models.build_ResNet50(num_classes=args.num_classes)
+        elif args.dataset == 'stl10':
+            import models.wideresnet_var as models
+            model = models.build_WideResNetVar(depth=args.model_depth,
+                                               widen_factor=args.model_width,
+                                               dropout=0,
+                                               num_classes=args.num_classes)
         else:
             import models.wideresnet as models
             model = models.build_wideresnet(depth=args.model_depth,
@@ -316,7 +322,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
         losses = AverageMeter()
         losses_labeled = AverageMeter()
         losses_unlabeled = AverageMeter()
-        losses_cross_dif = AverageMeter()
+        # losses_cross_dis = AverageMeter()
         losses_cross_con = AverageMeter()
         losses_graph_com = AverageMeter()
         mask_probs1 = AverageMeter()
@@ -389,7 +395,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             pseudo_label2 = pseudo_label2 / pseudo_label_avg2
             pseudo_label2 = pseudo_label2 / pseudo_label2.sum(dim=1, keepdim=True)
 
-            ###
+            # sharpen
             pseudo_label1 = pseudo_label1 ** (1 / args.ST)
             pseudo_label1 = pseudo_label1 / pseudo_label1.sum(dim=1, keepdim=True)
             pseudo_label2 = pseudo_label2 ** (2 / args.ST)
@@ -420,7 +426,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             loss_cross_labeled2 = 1 + cos_dis(logits_x2.detach(), logits_x1).mean()
             loss_cross_labeled = (loss_cross_labeled1 + loss_cross_labeled2) / 2
 
-            # cross unsupervised difference loss 模型预测的差异损失
+            # cross unsupervised difference loss
             loss_cross_weak_unlabeled1 = 1 + cos_dis(logits_u_w1.detach(), logits_u_w2).mean()
             loss_cross_weak_unlabeled2 = 1 + cos_dis(logits_u_w2.detach(), logits_u_w1).mean()
             loss_cross_weak_unlabeled = (loss_cross_weak_unlabeled1 + loss_cross_weak_unlabeled2) / 2
@@ -429,11 +435,11 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             loss_cross_strong_unlabeled = (loss_cross_strong_unlabeled1 + loss_cross_strong_unlabeled2) / 2
             loss_cross_unlabeled = (loss_cross_weak_unlabeled + loss_cross_strong_unlabeled) / 2
 
-            # cross difference loss
-            loss_cross_dif = (loss_cross_labeled + loss_cross_unlabeled) / 2
-            loss_cross_dif = args.lambda_dif * loss_cross_dif
+            # cross supervised difference loss
+            loss_cross_dis = (loss_cross_labeled + loss_cross_unlabeled) / 2
+            loss_cross_dis = args.lambda_dis * loss_cross_dis
 
-            # cross enforce consistence loss 交叉伪标签一致性损失
+            # cross enforce consistence loss
             loss_cross_con1 = (torch.sum(-F.log_softmax(logits_u_s1, dim=1) * pseudo_label2, dim=1) * mask1).mean()
             loss_cross_con2 = (torch.sum(-F.log_softmax(logits_u_s2, dim=1) * pseudo_label1, dim=1) * mask2).mean()
             loss_cross_con = (loss_cross_con1 + loss_cross_con2) / 2
@@ -452,15 +458,14 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             loss_graph_com = - (torch.log(sim_probs + 1e-7) * Q).sum(1)
             loss_graph_com = loss_graph_com.mean()
             loss_graph_com = args.lambda_com * loss_graph_com
-            # 不加 loss_graph_com
 
-            loss = loss_labeled + loss_unlabeled + loss_cross_dif + loss_cross_con
+            loss = loss_labeled + loss_unlabeled + loss_cross_con + loss_graph_com
 
             loss.backward()
             losses.update(loss.item())
             losses_labeled.update(loss_labeled.item())
             losses_unlabeled.update(loss_unlabeled.item())
-            losses_cross_dif.update(loss_cross_dif.item())
+            # losses_cross_dis.update(loss_cross_dis.item())
             losses_cross_con.update(loss_cross_con.item())
             losses_graph_com.update(loss_graph_com.item())
 
@@ -481,7 +486,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             mask_probs2.update(mask1.mean().item())
 
             # if not args.no_progress:
-            #     p_bar.set_description("Train Epoch: {epoch}/{epochs:4}. Iter: {batch:4}/{iter:4}. LR1: {lr1:.4f}. LR2: {lr2:.4f}. Data: {data:.3f}s. Batch: {bt:.3f}s. Loss: {loss:.4f}. Loss_labeled: {loss_labeled:.4f}. Loss_unlabeled: {loss_unlabeled:.4f}. Loss_cross_dif: {loss_cross_dif:.4f}. Loss_cross_con: {loss_cross_con:.4f}. Loss_graph_com: {loss_graph_com:.4f}. Mask1: {mask1:.2f}. Mask2: {mask2:.2f}.".format(
+            #     p_bar.set_description("Train Epoch: {epoch}/{epochs:4}. Iter: {batch:4}/{iter:4}. LR1: {lr1:.4f}. LR2: {lr2:.4f}. Data: {data:.3f}s. Batch: {bt:.3f}s. Loss: {loss:.4f}. Loss_labeled: {loss_labeled:.4f}. Loss_unlabeled: {loss_unlabeled:.4f}. loss_cross_dis: {loss_cross_dis:.4f}. Loss_cross_con: {loss_cross_con:.4f}. Loss_graph_com: {loss_graph_com:.4f}. Mask1: {mask1:.2f}. Mask2: {mask2:.2f}.".format(
             #         epoch=epoch + 1,
             #         epochs=args.epochs,
             #         batch=batch_idx + 1,
@@ -493,7 +498,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             #         loss=losses.avg,
             #         loss_labeled=losses_labeled.avg,
             #         loss_unlabeled=losses_unlabeled.avg,
-            #         loss_cross_dif=losses_cross_dif.avg,
+            #         loss_cross_dis=losses_cross_dis.avg,
             #         loss_cross_con=losses_cross_con.avg,
             #         loss_graph_com=losses_graph_com.avg,
             #         mask1=mask_probs1.avg,
@@ -514,7 +519,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             args.writer.add_scalar('train/1.train_loss', losses.avg, epoch)
             args.writer.add_scalar('train/2.train_loss_labeled', losses_labeled.avg, epoch)
             args.writer.add_scalar('train/3.train_loss_unlabeled', losses_unlabeled.avg, epoch)
-            args.writer.add_scalar('train/4.train_loss_cross_dif', losses_cross_dif.avg, epoch)
+            # args.writer.add_scalar('train/4.train_loss_cross_dis', losses_cross_dis.avg, epoch)
             args.writer.add_scalar('train/5.train_loss_cross_con', losses_cross_con.avg, epoch)
             args.writer.add_scalar('train/6.train_loss_graph_com', losses_graph_com.avg, epoch)
             args.writer.add_scalar('train/7.mask1', mask_probs1.avg, epoch)
