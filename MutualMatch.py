@@ -17,7 +17,7 @@ from tqdm import tqdm
 import torch.distributed as dist
 from dataset.sslDataset import SSL_Dataset, ImageNetLoader
 from utils import AverageMeter, accuracy
-os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 logger = logging.getLogger(__name__)
 best_acc = 0
@@ -28,7 +28,7 @@ def main():
     parser.add_argument('--gpu-id', default='0', type=int, help='id(s) for CUDA_VISIBLE_DEVICES')
     parser.add_argument('--num-workers', type=int, default=4, help='number of workers')
     parser.add_argument('--data_dir', type=str, default='./data')
-    parser.add_argument('--dataset', default='cifar10', type=str, choices=['cifar10', 'cifar100', 'stl10', 'svhn'],
+    parser.add_argument('--dataset', default='cifar10', type=str, choices=['cifar10', 'cifar100', 'stl10', 'svhn', 'imagenet', 'cub200'],
                         help='dataset name')
     parser.add_argument('--num-labels', type=int, default=4000)
     parser.add_argument("--expand-labels", action="store_true", help="expand labels to fit eval steps")
@@ -46,13 +46,11 @@ def main():
     parser.add_argument('--lambda-u', default=1, type=float)
     parser.add_argument('--lambda-dis', default=1, type=float)
     parser.add_argument('--lambda-con', default=1, type=float)
-    parser.add_argument('--lambda-com', default=1, type=float)
+    parser.add_argument('--lambda-com', default=1.5, type=float)
     parser.add_argument('--T', default=1, type=float, help='pseudo label temperature')
-    # 锐化温度
     parser.add_argument('--ST', default=0.8, type=float, help='sharpen temperature')
     parser.add_argument('--temperature', default=0.2, type=float, help='softmax temperature')
     parser.add_argument('--threshold', default=0.95, type=float, help='pseudo label threshold')
-    # 图半监督阈值
     parser.add_argument('--contrast-th', default=0.8, type=float, help='pseudo label graph threshold')
     parser.add_argument('--out', default='result', help='directory to output the result')
     parser.add_argument('--resume', default='', type=str, help='path to latest checkpoint (default: none)')
@@ -63,6 +61,10 @@ def main():
 
     if args.dataset == 'imagenet':
         args.num_classes = 1000
+        args.model_depth = 0
+        args.model_width = 0
+    elif args.dataset == 'cub200':
+        args.num_classes = 200
         args.model_depth = 0
         args.model_width = 0
     elif args.dataset == 'cifar100':
@@ -76,7 +78,7 @@ def main():
 
     # choose model
     def create_model(args):
-        if args.dataset == 'imagenet':
+        if args.dataset == 'imagenet' or 'cub200':
             import models.resnet50 as models
             model = models.build_ResNet50(num_classes=args.num_classes)
         elif args.dataset == 'stl10':

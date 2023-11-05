@@ -3,7 +3,6 @@ from .basicDataset import BasicDataset
 import torchvision
 import numpy as np
 from torchvision import transforms
-import json
 import os
 import random
 from .randaugment import RandAugmentMC
@@ -17,12 +16,14 @@ mean['cifar100'] = [0.5071, 0.4867, 0.4408]
 mean['svhn'] = [0.4380, 0.4440, 0.4730]
 mean['stl10'] = [0.4408, 0.4278, 0.3867]
 mean['imagenet'] = [0.485, 0.456, 0.406]
+mean['cub200'] = [0.485, 0.456, 0.406]
 
 std['cifar10'] = [0.2471, 0.2435, 0.2616]
 std['cifar100'] = [0.2675, 0.2565, 0.2761]
 std['svhn'] = [0.1751, 0.1771, 0.1744]
 std['stl10'] = [0.2682, 0.2612, 0.2686]
 std['imagenet'] = [0.229, 0.224, 0.225]
+std['cub200'] = [0.229, 0.224, 0.225]
 
 
 def accimage_loader(path):
@@ -54,7 +55,7 @@ class ImagenetDataset(torchvision.datasets.ImageFolder):
         self.num_labels = num_labels
         is_valid_file = None
         extensions = ('.jpg', '.jpeg', '.png', '.ppm', '.bmp', '.pgm', '.tif', '.tiff', '.webp')
-        classes, class_to_idx = self._find_classes(self.root)
+        classes, class_to_idx = self.find_classes(self.root)
         samples = self.make_dataset(self.root, class_to_idx, extensions, is_valid_file)
         if len(samples) == 0:
             msg = "Found 0 files in subfolders of: {}\n".format(self.root)
@@ -82,7 +83,7 @@ class ImagenetDataset(torchvision.datasets.ImageFolder):
         if self.target_transform is not None:
             target = self.target_transform(target)
         return (index, sample_transformed, target) if not self.ulb else (
-            index, sample_transformed, self.strong_transform(sample))
+            index, sample_transformed, self.strong_transform(sample), self.strong_transform(sample))
 
     def make_dataset(
             self,
@@ -119,9 +120,6 @@ class ImagenetDataset(torchvision.datasets.ImageFolder):
                     if is_valid_file(path):
                         item = path, class_index
                         instances.append(item)
-        if self.num_labels != -1:
-            with open('./sampled_label_idx.json', 'w') as f:
-                json.dump(lb_idx, f)
         del lb_idx
         gc.collect()
         return instances
@@ -188,11 +186,11 @@ class SSL_Dataset:
         self.train = train
         self.num_classes = num_classes
         self.data_dir = data_dir
-        crop_size = 96 if self.name.upper() == 'STL10' else 224 if self.name.upper() == 'IMAGENET' else 32
+        crop_size = 96 if self.name.upper() == 'STL10' else 224 if self.name.upper() == 'imagenet' or 'cub200' else 32
         self.transform = get_transform(mean[name], std[name], crop_size, train)
 
     def get_data(self, svhn_extra=True):
-        dset = getattr(torchvision.datasets, self.name.upper())
+        dset = get_cub(self.data_dir) if self.name == 'cub200' else getattr(torchvision.datasets, self.name.upper())
         if 'CIFAR' in self.name.upper():
             dset = dset(self.data_dir, train=self.train, download=True)
             data, targets = dset.data, dset.targets
@@ -222,6 +220,15 @@ class SSL_Dataset:
             data, targets = dset_lb.data.transpose([0, 2, 3, 1]), dset_lb.labels.astype(np.int64)
             ulb_data = dset_ulb.data.transpose([0, 2, 3, 1])
             return data, targets, ulb_data
+        else:
+            if self.train:
+                train_data = dset[0]
+                data, targets = train_data['images'], train_data['labels']
+                return data, targets
+            else:
+                test_data = dset[1]
+                data, targets = test_data['images'], test_data['labels']
+                return data, targets
 
     def get_dset(self, is_ulb=False,
                  strong_transform=None, onehot=False):
@@ -256,3 +263,55 @@ class SSL_Dataset:
                                 self.transform, True, strong_transform, onehot)
 
         return lb_dset, ulb_dset
+
+
+def get_cub(data_dir):
+    train_root = os.path.join(data_dir, 'CUB_200_2011', 'train')
+    test_root = os.path.join(data_dir, 'CUB_200_2011', 'test')
+    train_data = LoadedImageFolder(train_root)
+    test_data = LoadedImageFolder(test_root)
+    train_data = {"images": train_data.data, "labels": train_data.targets}
+    test_data = {"images": test_data.data, "labels": test_data.targets}
+    return train_data, test_data
+
+
+class LoadedImageFolder(torchvision.datasets.ImageFolder):
+    def __init__(self, root, transform=None, target_transform=None):
+        super(LoadedImageFolder, self).__init__(root, transform=transform, target_transform=target_transform)
+        self._load_images()
+
+    def _load_images(self):
+        data, targets = [], []
+        for (path, target) in self.samples:
+            try:
+                sample = self.loader(path)
+            except:
+                print('Err:', path)
+                continue
+            data.append(sample)
+            targets.append(target)
+        self.data = data
+        self.targets = np.array(targets)
+
+    def __getitem__(self, index):
+        """
+        Args:
+            index (int): Index
+
+        Returns:
+            tuple: (image, target) where target is index of the target class.
+        """
+        img, target = self.data[index], self.targets[index]
+
+        if self.transform is not None:
+            if isinstance(img, np.ndarray):
+                img = Image.fromarray(img)
+            img = self.transform(img)
+
+        if self.target_transform is not None:
+            target = self.target_transform(target)
+
+        return img, target
+
+    def __len__(self):
+        return len(self.data)
