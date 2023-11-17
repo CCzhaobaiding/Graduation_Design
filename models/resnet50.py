@@ -133,7 +133,7 @@ class ResNet50(nn.Module):
             self,
             block: Type[Union[BasicBlock, Bottleneck]] = Bottleneck,
             layers: List[int] = [3, 4, 6, 3],
-            n_class: int = 1000,
+            n_class: int = 200,
             zero_init_residual: bool = False,
             groups: int = 1,
             width_per_group: int = 64,
@@ -167,7 +167,7 @@ class ResNet50(nn.Module):
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2,
                                        dilate=replace_stride_with_dilation[2])
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(512 * block.expansion, n_class)
+        self.fc0 = nn.Linear(512 * block.expansion, n_class)
         self.expansion = 512 * block.expansion
 
         low_dim = 64
@@ -228,7 +228,7 @@ class ResNet50(nn.Module):
 
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        out = self.fc(x)
+        out = self.fc0(x)
 
         feat = self.fc1(x)
         feat = self.relu(feat)

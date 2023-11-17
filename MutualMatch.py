@@ -8,6 +8,7 @@ import time
 import numpy as np
 import torch
 import torch.nn.functional as F
+import torchvision
 from torch import nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR
@@ -28,7 +29,7 @@ def main():
     parser.add_argument('--gpu-id', default='0', type=int, help='id(s) for CUDA_VISIBLE_DEVICES')
     parser.add_argument('--num-workers', type=int, default=4, help='number of workers')
     parser.add_argument('--data_dir', type=str, default='./data')
-    parser.add_argument('--dataset', default='cifar10', type=str, choices=['cifar10', 'cifar100', 'stl10', 'svhn', 'imagenet', 'cub200'],
+    parser.add_argument('--dataset', default='cifar10', type=str, choices=['cifar10', 'cifar100', 'stl10', 'svhn', 'cub200','imagenet'],
                         help='dataset name')
     parser.add_argument('--num-labels', type=int, default=4000)
     parser.add_argument("--expand-labels", action="store_true", help="expand labels to fit eval steps")
@@ -46,9 +47,10 @@ def main():
     parser.add_argument('--lambda-u', default=1, type=float)
     parser.add_argument('--lambda-dis', default=1, type=float)
     parser.add_argument('--lambda-con', default=1, type=float)
-    parser.add_argument('--lambda-com', default=1.5, type=float)
+    parser.add_argument('--lambda-com', default=1, type=float)
     parser.add_argument('--T', default=1, type=float, help='pseudo label temperature')
     parser.add_argument('--ST', default=0.8, type=float, help='sharpen temperature')
+    parser.add_argument('--ST1', default=0.4, type=float, help='sharpen temperature')
     parser.add_argument('--temperature', default=0.2, type=float, help='softmax temperature')
     parser.add_argument('--threshold', default=0.95, type=float, help='pseudo label threshold')
     parser.add_argument('--contrast-th', default=0.8, type=float, help='pseudo label graph threshold')
@@ -65,8 +67,6 @@ def main():
         args.model_width = 0
     elif args.dataset == 'cub200':
         args.num_classes = 200
-        args.model_depth = 0
-        args.model_width = 0
     elif args.dataset == 'cifar100':
         args.num_classes = 100
         args.model_depth = 28
@@ -78,9 +78,18 @@ def main():
 
     # choose model
     def create_model(args):
-        if args.dataset == 'imagenet' or 'cub200':
+        if args.dataset == 'imagenet':
             import models.resnet50 as models
             model = models.build_ResNet50(num_classes=args.num_classes)
+        elif args.dataset == 'cub200':
+            resnet50 = torchvision.models.resnet50(pretrained=True)
+            import models.resnet50 as models
+            model = models.ResNet50(n_class=200)
+            pretrained_dict = resnet50.state_dict()
+            model_dict = model.state_dict()
+            pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
+            model_dict.update(pretrained_dict)
+            model.load_state_dict(model_dict, strict=False)
         elif args.dataset == 'stl10':
             import models.wideresnet_var as models
             model = models.build_WideResNetVar(depth=args.model_depth,
@@ -400,7 +409,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             # sharpen
             pseudo_label1 = pseudo_label1 ** (1 / args.ST)
             pseudo_label1 = pseudo_label1 / pseudo_label1.sum(dim=1, keepdim=True)
-            pseudo_label2 = pseudo_label2 ** (2 / args.ST)
+            pseudo_label2 = pseudo_label2 ** (1 / args.ST1)
             pseudo_label2 = pseudo_label2 / pseudo_label2.sum(dim=1, keepdim=True)
 
             # max_probs, targets_u = torch.max(pseudo_label, dim=-1)

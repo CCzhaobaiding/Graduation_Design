@@ -8,6 +8,7 @@ def split_ssl_data(args, data, target, num_labels, num_classes, index=None):
     data, target = np.array(data), np.array(target)
     lb_data, lbs, lb_idx, = sample_labeled_data(args, data, target, num_labels, num_classes, index)
     ulb_idx = np.array(range(len(target)))
+    # 扩增到64*7*1024后全部一起RandomSampler还是保持原大小散列后iterator重复读取，两种结果实验对比
     return lb_data, lbs, data[ulb_idx], target[ulb_idx]
 
 

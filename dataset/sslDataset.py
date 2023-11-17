@@ -3,6 +3,7 @@ from .basicDataset import BasicDataset
 import torchvision
 import numpy as np
 from torchvision import transforms
+import json
 import os
 import random
 from .randaugment import RandAugmentMC
@@ -24,7 +25,6 @@ std['svhn'] = [0.1751, 0.1771, 0.1744]
 std['stl10'] = [0.2682, 0.2612, 0.2686]
 std['imagenet'] = [0.229, 0.224, 0.225]
 std['cub200'] = [0.229, 0.224, 0.225]
-
 
 def accimage_loader(path):
     import accimage
@@ -120,6 +120,9 @@ class ImagenetDataset(torchvision.datasets.ImageFolder):
                     if is_valid_file(path):
                         item = path, class_index
                         instances.append(item)
+        if self.num_labels != -1:
+            with open('./sampled_label_idx.json', 'w') as f:
+                json.dump(lb_idx, f)
         del lb_idx
         gc.collect()
         return instances
@@ -186,7 +189,7 @@ class SSL_Dataset:
         self.train = train
         self.num_classes = num_classes
         self.data_dir = data_dir
-        crop_size = 96 if self.name.upper() == 'STL10' else 224 if self.name.upper() == 'imagenet' or 'cub200' else 32
+        crop_size = 96 if self.name.upper() == 'STL10' else 224 if self.name.upper() == 'cub200' else 32
         self.transform = get_transform(mean[name], std[name], crop_size, train)
 
     def get_data(self, svhn_extra=True):
@@ -263,7 +266,6 @@ class SSL_Dataset:
                                 self.transform, True, strong_transform, onehot)
 
         return lb_dset, ulb_dset
-
 
 def get_cub(data_dir):
     train_root = os.path.join(data_dir, 'CUB_200_2011', 'train')
